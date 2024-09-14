@@ -1,0 +1,10 @@
+# Binaries
+*.pyc
+simbuild/*
+build/*
+*.xml
+TOSSIM.py
+_TOSSIMmodule.so
+.clang-format
+venv
+.vscode
