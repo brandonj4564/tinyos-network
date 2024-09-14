@@ -8,3 +8,4 @@ _TOSSIMmodule.so
 .clang-format
 venv
 .vscode
+.DS_Store
