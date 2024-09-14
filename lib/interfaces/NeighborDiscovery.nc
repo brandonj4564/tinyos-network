@@ -1,3 +1,4 @@
-interface NeighborDiscovery{
-    command void pass();
+interface NeighborDiscovery {
+  command void pass();
+  command void start();
 }

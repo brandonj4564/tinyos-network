@@ -13,7 +13,10 @@ enum{
 	PROTOCOL_NAME = 3,
 	PROTOCOL_TCP= 4,
 	PROTOCOL_DV = 5,
-   PROTOCOL_CMD = 99
+	// Protocols for Neighbor Discovery
+	PROTOCOL_BEACON_SEND = 6,
+	PROTOCOL_BEACON_RESPONSE = 7,
+    PROTOCOL_CMD = 99
 };
 
 
