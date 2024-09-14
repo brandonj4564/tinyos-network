@@ -7,27 +7,30 @@
  *
  */
 
-#include <Timer.h>
 #include "includes/CommandMsg.h"
 #include "includes/packet.h"
+#include <Timer.h>
 
-configuration NodeC{
-}
+configuration NodeC {}
 implementation {
-    components MainC;
-    components Node;
-    components new AMReceiverC(AM_PACK) as GeneralReceive;
+  components MainC;
+  components Node;
+  components new AMReceiverC(AM_PACK) as GeneralReceive;
 
-    Node -> MainC.Boot;
+  Node->MainC.Boot;
 
-    Node.Receive -> GeneralReceive;
+  Node.Receive->GeneralReceive;
 
-    components ActiveMessageC;
-    Node.AMControl -> ActiveMessageC;
+  components ActiveMessageC;
+  Node.AMControl->ActiveMessageC;
 
-    components new SimpleSendC(AM_PACK);
-    Node.Sender -> SimpleSendC;
+  components new SimpleSendC(AM_PACK);
+  Node.Sender->SimpleSendC;
 
-    components CommandHandlerC;
-    Node.CommandHandler -> CommandHandlerC;
+  components CommandHandlerC;
+  Node.CommandHandler->CommandHandlerC;
+
+  // Wires in NeighborDiscovery so that Node can access it
+  components NeighborDiscoveryC;
+  Node.NeighborDiscovery->NeighborDiscoveryC;
 }
