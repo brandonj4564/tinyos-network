@@ -55,9 +55,6 @@ module NeighborDiscoveryP {
 }
 
 implementation {
-  pack beacon;
-  // Declare the payload array here inside the event
-  uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
 
   void makePack(pack * Package, uint16_t src, uint16_t dest, uint16_t TTL,
                 uint16_t protocol, uint16_t seq, uint8_t * payload,
@@ -71,27 +68,35 @@ implementation {
   }
 
   // Implements the function
-  // TODO: Get rid of pass() later since it's a useless function
-  command void NeighborDiscovery.pass() {
-    dbg(GENERAL_CHANNEL, "hi\n");
-    call beaconTimer.startOneShot(1000);
-  }
-
   command void NeighborDiscovery.start() {
-    dbg(GENERAL_CHANNEL, "we are starting\n");
-
     // ms, so 4 seconds
-    call beaconTimer.startOneShot(4000);
+    call beaconTimer.startPeriodic(4000);
   }
 
   event void beaconTimer.fired() {
-    // dbg(GENERAL_CHANNEL, "timer expired\n");
+    pack beacon;
+    uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
 
-    // Now pass the payload array to makePack function
     makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_BEACON_SEND,
              1, payload, sizeof(payload));
 
     // Send the beacon
     call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
+  }
+
+  command void NeighborDiscovery.beaconSentReceived(pack * msg) {
+    uint16_t src = msg->src;
+    pack beaconResponse;
+    uint8_t response[1] = {0}; // Beacon packets don't really need a payload
+
+    makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_BEACON_RESPONSE, 1,
+             response, sizeof(response));
+
+    call SimpleSend.send(beaconResponse, src);
+  }
+
+  command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
+    // Add src of the message to array of neighbors
+    // dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
   }
 }

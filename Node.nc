@@ -37,7 +37,7 @@ implementation {
     call AMControl.start();
 
     dbg(GENERAL_CHANNEL, "Booted\n");
-    call NeighborDiscovery.pass();
+    call NeighborDiscovery.start();
   }
 
   event void AMControl.startDone(error_t err) {
@@ -54,11 +54,22 @@ implementation {
   event message_t *Receive.receive(message_t * msg, void *payload,
                                    uint8_t len) {
     dbg(GENERAL_CHANNEL, "Packet Received\n");
+
     if (len == sizeof(pack)) {
       pack *myMsg = (pack *)payload;
-      dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
+
+      if (myMsg->protocol == PROTOCOL_BEACON_SEND) {
+        call NeighborDiscovery.beaconSentReceived(myMsg);
+
+      } else if (myMsg->protocol == PROTOCOL_BEACON_RESPONSE) {
+        call NeighborDiscovery.beaconResponseReceived(myMsg);
+
+      } else {
+        dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
+      }
       return msg;
     }
+
     dbg(GENERAL_CHANNEL, "Unknown Packet Type %d\n", len);
     return msg;
   }
