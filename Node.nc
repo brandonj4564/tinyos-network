@@ -23,6 +23,7 @@ module Node {
 
   uses interface CommandHandler;
   uses interface NeighborDiscovery;
+  uses interface Flooding;
 }
 
 implementation {
@@ -37,7 +38,8 @@ implementation {
     call AMControl.start();
 
     dbg(GENERAL_CHANNEL, "Booted\n");
-    call NeighborDiscovery.start();
+    // call NeighborDiscovery.start();
+    call Flooding.sendMessage(1);
   }
 
   event void AMControl.startDone(error_t err) {
@@ -64,9 +66,12 @@ implementation {
       } else if (myMsg->protocol == PROTOCOL_BEACON_RESPONSE) {
         call NeighborDiscovery.beaconResponseReceived(myMsg);
 
+      } else if (myMsg->protocol == PROTOCOL_FLOODING){
+        call Flooding.recieveMessage(myMsg);
+
       } else {
         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
-      }
+      } 
       return msg;
     }
 

@@ -16,6 +16,7 @@ enum{
 	// Protocols for Neighbor Discovery
 	PROTOCOL_BEACON_SEND = 6,
 	PROTOCOL_BEACON_RESPONSE = 7,
+	PROTOCOL_FLOODING = 8,
     PROTOCOL_CMD = 99
 };
 

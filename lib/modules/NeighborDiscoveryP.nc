@@ -44,6 +44,7 @@ attach the node's own address. If it is a BEACON RESPONSE, add the address in
 that packet to the array of neighbors.
 5. Clear the list of neighbors occasionally and restart the process.
 */
+
 module NeighborDiscoveryP {
   // Provides shows the interface we are implementing. See
   // lib/interface/NeighborDiscovery.nc to see what funcitons we need to
@@ -52,6 +53,7 @@ module NeighborDiscoveryP {
 
   uses interface Timer<TMilli> as beaconTimer;
   uses interface SimpleSend;
+
 }
 
 implementation {
@@ -97,6 +99,7 @@ implementation {
 
   command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
     // Add src of the message to array of neighbors
-    // dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
+    dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
+
   }
 }

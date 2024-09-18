@@ -33,4 +33,8 @@ implementation {
   // Wires in NeighborDiscovery so that Node can access it
   components NeighborDiscoveryC;
   Node.NeighborDiscovery->NeighborDiscoveryC;
+
+  //Wires in Flooding so that Node can access it
+  components FloodingC;
+  Node.Flooding->FloodingC;
 }
