@@ -1,8 +1,10 @@
 interface Flooding {
 
-  command void sendMessage(uint8_t * payload);
+  command void start();
+
+  command void sendMessage(uint16_t dest, uint16_t TTL, uint8_t * payload,
+                           uint8_t length);
 
   command void recieveMessage(pack * msg);
-
 }
-//Acknowledgement needed
+// Acknowledgement needed

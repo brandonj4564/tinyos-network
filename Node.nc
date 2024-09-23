@@ -39,7 +39,7 @@ implementation {
 
     dbg(GENERAL_CHANNEL, "Booted\n");
     // call NeighborDiscovery.start();
-    call Flooding.sendMessage(1);
+    call Flooding.start();
   }
 
   event void AMControl.startDone(error_t err) {
@@ -55,23 +55,23 @@ implementation {
 
   event message_t *Receive.receive(message_t * msg, void *payload,
                                    uint8_t len) {
-    dbg(GENERAL_CHANNEL, "Packet Received\n");
+    // dbg(GENERAL_CHANNEL, "Packet Received\n");
 
     if (len == sizeof(pack)) {
       pack *myMsg = (pack *)payload;
 
-      if (myMsg->protocol == PROTOCOL_BEACON_SEND) {
+      if (myMsg->protocol == PROTOCOL_PING) {
         call NeighborDiscovery.beaconSentReceived(myMsg);
 
-      } else if (myMsg->protocol == PROTOCOL_BEACON_RESPONSE) {
+      } else if (myMsg->protocol == PROTOCOL_PINGREPLY) {
         call NeighborDiscovery.beaconResponseReceived(myMsg);
 
-      } else if (myMsg->protocol == PROTOCOL_FLOODING){
+      } else if (myMsg->protocol == PROTOCOL_FLOODING) {
         call Flooding.recieveMessage(myMsg);
 
       } else {
         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
-      } 
+      }
       return msg;
     }
 

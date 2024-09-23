@@ -32,17 +32,14 @@ implementation{
 
 /*
 TODO:
-1. Create a start() function here that gets called in the boot event in Node.nc
-that initializes a periodic timer. Also, create an array of addresses of
-neighbors here.
-2. Create a special BEACON SEND protocol and a BEACON RESPONSE protocol.
-3. Create the timer.fire() event which will broadcast a BEACON SEND packet to
-all neighbors.
-4. Create a receive() function here that gets called in Node.nc when a BEACON
-packet is received. If the packet is a BEACON SEND, reply to the packet and
-attach the node's own address. If it is a BEACON RESPONSE, add the address in
-that packet to the array of neighbors.
-5. Clear the list of neighbors occasionally and restart the process.
+1. Get rid of the neighbor discovery protocols and just use the ping and ping
+reply protocols
+2. Have this module gather statistics on neighbors. If a neighbor does not
+respond more than 50% of the time to beacon packets or something, it is not a
+neighbor. Maybe we can do this with hashmaps.
+3. Add a function that can query the neighbor list.
+
+Honestly I don't know exactly how to collect the neighbor statistics.
 */
 
 module NeighborDiscoveryP {
@@ -53,7 +50,6 @@ module NeighborDiscoveryP {
 
   uses interface Timer<TMilli> as beaconTimer;
   uses interface SimpleSend;
-
 }
 
 implementation {
@@ -79,8 +75,8 @@ implementation {
     pack beacon;
     uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
 
-    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_BEACON_SEND,
-             1, payload, sizeof(payload));
+    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_PING, 1,
+             payload, sizeof(payload));
 
     // Send the beacon
     call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
@@ -91,7 +87,7 @@ implementation {
     pack beaconResponse;
     uint8_t response[1] = {0}; // Beacon packets don't really need a payload
 
-    makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_BEACON_RESPONSE, 1,
+    makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_PINGREPLY, 1,
              response, sizeof(response));
 
     call SimpleSend.send(beaconResponse, src);
@@ -100,6 +96,5 @@ implementation {
   command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
     // Add src of the message to array of neighbors
     dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
-
   }
 }
