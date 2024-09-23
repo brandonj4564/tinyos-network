@@ -32,12 +32,16 @@ implementation{
 
 /*
 TODO:
-1. Get rid of the neighbor discovery protocols and just use the ping and ping
-reply protocols
-2. Have this module gather statistics on neighbors. If a neighbor does not
+1. Have this module gather statistics on neighbors. If a neighbor does not
 respond more than 50% of the time to beacon packets or something, it is not a
 neighbor. Maybe we can do this with hashmaps.
-3. Add a function that can query the neighbor list.
+2. Add a function that can query the neighbor list.
+3. Have this module track an arbitrary number of previous beacon broadcasts, say
+ten for example. Count the number of beacon responses received from each other
+node in a hashmap or something. If the ratio of beacon responses to beacon
+broadcasts is above some arbitrary threshold, that node is a neighbor.
+4. Use one hashmap for each broadcast counted to store information about which
+node responded.
 
 Honestly I don't know exactly how to collect the neighbor statistics.
 */

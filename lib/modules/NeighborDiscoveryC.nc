@@ -8,10 +8,6 @@ implementation {
   components new TimerMilliC() as beaconTimer;
   NeighborDiscoveryP.beaconTimer->beaconTimer;
 
-  // components NodeC;
-  // NodeC.makePack->makePack;
-
   components new SimpleSendC(AM_PACK);
   NeighborDiscoveryP.SimpleSend->SimpleSendC;
-
 }
