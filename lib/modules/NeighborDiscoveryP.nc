@@ -54,7 +54,18 @@ module NeighborDiscoveryP {
 
   uses interface Timer<TMilli> as beaconTimer;
   uses interface SimpleSend;
+
+  uses interface List<uint16_t> as Transmit1;
+  uses interface List<uint16_t> as Transmit2;
+  uses interface List<uint16_t> as Transmit3;
+  uses interface List<uint16_t> as Transmit4;
+  uses interface List<uint16_t> as Transmit5;
+
+  //Hashmap
+  use interface Hashmap<uint16_t> as numAppearances;
+
 }
+
 
 implementation {
 
@@ -75,6 +86,10 @@ implementation {
     call beaconTimer.startPeriodic(4000);
   }
 
+  uint16_t count = 5;
+  // The number of beacons sent
+  uint16_t beaconsSent = 1;
+
   event void beaconTimer.fired() {
     pack beacon;
     uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
@@ -83,7 +98,14 @@ implementation {
              payload, sizeof(payload));
 
     // Send the beacon
-    call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
+    call SimpleSend.send(beacon, AM_BROADCAST_ADDR);  
+
+    if(count > 4){
+      count = 0;
+      // count++;
+    } else{
+      count++;
+    }
   }
 
   command void NeighborDiscovery.beaconSentReceived(pack * msg) {
@@ -100,5 +122,104 @@ implementation {
   command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
     // Add src of the message to array of neighbors
     dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
+    
+    uint16_t src = msg->src;
+
+    //clear each hashmap at its respective transmission
+    if (count == 0){
+      //call hashmap 1
+      call Transmit1.pushback(src, 1);
+
+    } else if (count == 1){
+      //call Hashmap 2
+      call Transmit2.pushback(src, 1);
+
+    } else if (count == 2){
+      //call Hashmap 3
+      call Transmit3.pushback(src, 1);
+
+    } else if (count == 3){
+      //call Hashmap 4
+      call Transmit4.pushback(src, 1);
+
+    } else if (count == 4){
+      //call Hashmap 5
+      call Transmit5.pushback(src, 1);
+
+    }
+
+  }
+
+  void areNeighborsWorthy(){ 
+    uint16_t appears = 0;
+    //Threshold = 60%
+    float threshold = 0.6;
+
+    float stat = 0;
+
+    //Go to each list and get an array from there.
+
+
+    // uint32_t uniqueArray[100];
+
+    // for(uint16_t i = 0; i < 100; i++){
+    // }
+
+    for(uint16_t i = 0; i < 5; i++){
+
+      uint16_t counter = 0;
+      while(true){
+        uint16_t node;
+        // This goes through all of the lists and increments the corresponding entry in
+        // numAppearances for each item, basically counting the number of times
+        // each node responded to a beacon sent by this current node
+        if(i == 0 && counter < call Transmit1.size()){
+          // Get a node id from the list of nodes that responded to this beacon
+          node = call Transmit1.get(counter);
+        }
+        else if(i == 1 && counter < call Transmit2.size()){
+          node = call Transmit2.get(counter);
+        }
+        else if(i == 2 && counter < call Transmit3.size()){
+          node = call Transmit3.get(counter);
+        }
+        else if(i == 3 && counter < call Transmit4.size()){
+          node = call Transmit4.get(counter);
+        }
+        else if(i == 4 && counter < call Transmit5.size()){
+          node = call Transmit5.get(counter);
+        }
+        else{
+          counter = 0;
+          break;
+        }
+
+        if(call numAppearances.contains(node)){
+          // If numAppearances hashmap contains the node, increase its number of appearances
+          uint16_t currentNumAppearances = call numAppearances.get(node);
+          currentNumAppearances++;
+          call numAppearances.remove(node);
+          call numAppearances.insert(node, currentNumAppearances);
+        }
+        else{
+          // Node is not yet in numAppearances so insert it with known one appearance so far
+          call numAppearances.insert(node, 1);
+        }
+        counter++;
+      }
+    }
+
+    
+
+    float denominator = 5;
+    if(beaconsSent < 5){
+      denominator = beaconsSent;
+    }
+
+    // float neighborStat = stat/denominator;
+    if(stat/denominator >= threshold){
+
+    }
+
   }
 }
