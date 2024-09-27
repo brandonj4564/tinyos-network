@@ -55,14 +55,10 @@ module NeighborDiscoveryP {
   uses interface Timer<TMilli> as beaconTimer;
   uses interface SimpleSend;
 
-  uses interface List<uint16_t> as Transmit1;
-  uses interface List<uint16_t> as Transmit2;
-  uses interface List<uint16_t> as Transmit3;
-  uses interface List<uint16_t> as Transmit4;
-  uses interface List<uint16_t> as Transmit5;
-
   //Hashmap
-  use interface Hashmap<uint16_t> as numAppearances;
+  uses interface Hashmap<uint16_t> as transmissions;
+
+  uses interface Hashmap<uint32_t*> as neighborList;
 
 }
 
@@ -86,9 +82,20 @@ implementation {
     call beaconTimer.startPeriodic(4000);
   }
 
-  uint16_t count = 5;
   // The number of beacons sent
   uint16_t beaconsSent = 1;
+  uint16_t sequenceNum = 0;
+
+  void forgetNeighborResponse() {
+    uint32_t* nodeKeys;
+    nodeKeys = call transmissions.getKeys();
+    uint16_t i;
+    for (i = 0; i < call transmissions.size(); i++){
+      uint32_t* transArray = call transmissions.get(nodeKeys[i]);
+      transArray[sequenceNum % 5] = 0;
+
+    }
+  }
 
   event void beaconTimer.fired() {
     pack beacon;
@@ -100,12 +107,10 @@ implementation {
     // Send the beacon
     call SimpleSend.send(beacon, AM_BROADCAST_ADDR);  
 
-    if(count > 4){
-      count = 0;
-      // count++;
-    } else{
-      count++;
-    }
+    //depending on sequence number, make all arrays in that (sequence % 5) zero 
+    forgetNeighborResponse();
+
+    sequenceNum++;
   }
 
   command void NeighborDiscovery.beaconSentReceived(pack * msg) {
@@ -125,101 +130,77 @@ implementation {
     
     uint16_t src = msg->src;
 
-    //clear each hashmap at its respective transmission
-    if (count == 0){
-      //call hashmap 1
-      call Transmit1.pushback(src, 1);
+    /*if (src not in hashmap){
+        initialize array
+        add src and array to hasmap
+      } else {
+        access array corresponding to src
+        add 1 to array position depending on (sequence % 5)
 
-    } else if (count == 1){
-      //call Hashmap 2
-      call Transmit2.pushback(src, 1);
+      }
 
-    } else if (count == 2){
-      //call Hashmap 3
-      call Transmit3.pushback(src, 1);
+    */
 
-    } else if (count == 3){
-      //call Hashmap 4
-      call Transmit4.pushback(src, 1);
-
-    } else if (count == 4){
-      //call Hashmap 5
-      call Transmit5.pushback(src, 1);
-
+    if(call transmissions.contain(src)){
+        uint32_t* transArray = call transmissions.get(src);
+        transArray[sequenceNum % 5] = 1;
+    } else{
+      uint32_t transmit[5] = {0,0,0,0,0};
+      transmit[sequence % 5] = 1; 
+      call transmissions.insert(src, transmit);
     }
 
   }
 
   void areNeighborsWorthy(){ 
-    uint16_t appears = 0;
     //Threshold = 60%
     float threshold = 0.6;
 
     float stat = 0;
 
     //Go to each list and get an array from there.
+    //..............................................................
+      uint32_t * nodeKeys = call transmissions.getKeys();
+      int valueNumSumOfTum = 0;
 
-
-    // uint32_t uniqueArray[100];
-
-    // for(uint16_t i = 0; i < 100; i++){
-    // }
-
-    for(uint16_t i = 0; i < 5; i++){
-
-      uint16_t counter = 0;
-      while(true){
-        uint16_t node;
-        // This goes through all of the lists and increments the corresponding entry in
-        // numAppearances for each item, basically counting the number of times
-        // each node responded to a beacon sent by this current node
-        if(i == 0 && counter < call Transmit1.size()){
-          // Get a node id from the list of nodes that responded to this beacon
-          node = call Transmit1.get(counter);
-        }
-        else if(i == 1 && counter < call Transmit2.size()){
-          node = call Transmit2.get(counter);
-        }
-        else if(i == 2 && counter < call Transmit3.size()){
-          node = call Transmit3.get(counter);
-        }
-        else if(i == 3 && counter < call Transmit4.size()){
-          node = call Transmit4.get(counter);
-        }
-        else if(i == 4 && counter < call Transmit5.size()){
-          node = call Transmit5.get(counter);
-        }
-        else{
-          counter = 0;
-          break;
+      for (uint16_t i = 0; i < call transmissions.size(); i++){
+        uint32_t* transArray = call transmissions.get(nodeKeys[i]);
+        for(uint16_t j = 0; j < 5; j++){
+          valueNumSumOfTum += transArray[j];
         }
 
-        if(call numAppearances.contains(node)){
-          // If numAppearances hashmap contains the node, increase its number of appearances
-          uint16_t currentNumAppearances = call numAppearances.get(node);
-          currentNumAppearances++;
-          call numAppearances.remove(node);
-          call numAppearances.insert(node, currentNumAppearances);
+        float denominator = 5;
+        if(beaconsSent < 5){
+          denominator = beaconsSent;
+        } 
+        float numRecieved = valueNumSumOfTum;
+        
+        if(numRecieved/denominator >= threshold){
+          if(!(call neighborList.contain(nodeKeys[i]))){
+            call neighborList.insert(nodeKeys[i], numRecieved/denominator);
+          } else{
+            call neighborList.remove(nodeKeys[i]);
+            call neighborList.insert(nodeKeys[i], numRecieved/denominator);
+          }
+        } else {
+          if(call neighborList.contain(nodeKeys[i])){
+            call neighborList.remove(nodeKeys[i]);
+          }
         }
-        else{
-          // Node is not yet in numAppearances so insert it with known one appearance so far
-          call numAppearances.insert(node, 1);
-        }
-        counter++;
+
+        valueNumSumOfTum = 0;
       }
-    }
-
+    //..............................................................
     
-
-    float denominator = 5;
-    if(beaconsSent < 5){
-      denominator = beaconsSent;
-    }
-
-    // float neighborStat = stat/denominator;
-    if(stat/denominator >= threshold){
-
-    }
-
   }
+
+  command uint32_t * NeighborDiscovery.getNeighbors(){
+    return call neighborList.getKeys();
+  }
+
+  command uint16_t NeighborDiscovery.getNumNeighbors(){
+    return call neighborList.size();
+  }
+  
+  
 }
