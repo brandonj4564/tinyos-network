@@ -58,16 +58,26 @@ module NeighborDiscoveryP {
 
   // Hashmap
   uses interface Hashmap<uint16_t> as neighborList;
+
+  // This hashmap takes in a node id as a key and stores the pointer of an array
+  // of length 5 as the value. This array stores data on the past 5 beacon
+  // packets sent. If the array is [0, 1, 1, 0, 1], that means the node that
+  // corresponds to this array responded to 3 out of the past 5 beacons.
   uses interface Hashmap<uint32_t *> as BeaconResponses;
 }
 
 implementation {
   // Variables
-  // The number of beacons sent
+
+  // The sequence number doubles as a way to keep track of which array we are
+  // currently using to track which nodes have responded to our beacon. This is
+  // done by calculating sequenceNum % 5.
   uint16_t sequenceNum = 0;
+
   // Stores arrays for 10 potential neighbors, increase storage if necessary
   // Should match the storage allocated to the BeaconResponses hashmap
-  uint32_t initialReplyArray[10][5];
+  uint32_t initialReplyArraySizeLimit = 10;
+  uint32_t initialReplyArray[initialReplyArraySizeLimit][5];
   uint16_t initialReplyArraySize = 0;
 
   // Commands and Functions
@@ -84,7 +94,7 @@ implementation {
   }
 
   void areNeighborsWorthy() {
-    // Threshold = 60%
+    // Threshold = 60% out of the past 5, so 3/5
     float threshold = 0.6;
     uint32_t *neighborKeys = call BeaconResponses.getKeys();
 
@@ -124,31 +134,29 @@ implementation {
 
   // Send the beacon packet to all neighbors
   task void sendBeaconPacket() {
-    // I did not know that nesC requires that all variables be declared at the
-    // beginning which was annoying
+    // (Note: remember that nesC vars need to be declared in the start)
     pack beacon;
     uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
     uint32_t *neighborKeys = call BeaconResponses.getKeys();
     uint16_t i;
 
-    // Forgets data from the oldest beacon sent
+    sequenceNum++;
+    // Re-evaluates neighbors based on new stats
+    areNeighborsWorthy();
+
+    // Forgets data from the oldest beacon sent, assumes all beacons did not
+    // respond
     for (i = 0; i < call BeaconResponses.size(); i++) {
       uint32_t *replyArray =
           (uint32_t *)(call BeaconResponses.get(neighborKeys[i]));
-      // dbg(GENERAL_CHANNEL, "this node's neighbor's include: %i\n",
-      // neighborKeys[i]);
       replyArray[sequenceNum % 5] = 0;
     }
 
-    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_PING, 1,
-             payload, sizeof(payload));
+    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_PING,
+             sequenceNum, payload, sizeof(payload));
 
     // Send the beacon
     call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
-
-    // Re-evaluates neighbors based on new data
-    areNeighborsWorthy();
-    sequenceNum++;
   }
 
   // Implements the function
@@ -181,7 +189,7 @@ implementation {
   command void NeighborDiscovery.beaconSentReceived(pack * msg) {
     uint16_t src = msg->src;
     pack beaconResponse;
-    uint8_t response[1] = {0}; // Beacon packets don't really need a payload
+    uint8_t response[1] = {0}; // Beacon packets don't need a payload
 
     makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_PINGREPLY, 1,
              response, sizeof(response));
@@ -192,26 +200,36 @@ implementation {
   command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
     uint16_t src = msg->src;
 
-    // Add src of the message to array of neighbors
     // dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
 
     if (call BeaconResponses.contains(src)) {
+      // If the table already has an entry for the src node, get the associated
+      // array and update the current array value to 1 since it has replied
       uint32_t *replyArray = (uint32_t *)(call BeaconResponses.get(src));
-      if (src == 6) {
-        replyArray[sequenceNum % 5] = 1;
-      }
+      replyArray[sequenceNum % 5] = 1;
 
     } else {
-      int i;
-      for (i = 0; i < 5; i++) {
-        // set to 0
-        initialReplyArray[initialReplyArraySize][i] = 0;
-      }
+      // Src node not in table, create a new array for it and store it in the
+      // initialReplyArray matrix
+      if (initialReplyArraySize < initialReplyArraySizeLimit) {
+        // Ensure the initialReplyArray has enough space to store another array
 
-      initialReplyArray[initialReplyArraySize][sequenceNum % 5] = 1;
-      call BeaconResponses.insert(src,
-                                  initialReplyArray[initialReplyArraySize]);
-      initialReplyArraySize++;
+        int i;
+        for (i = 0; i < 5; i++) {
+          // set to 0
+          initialReplyArray[initialReplyArraySize][i] = 0;
+        }
+
+        initialReplyArray[initialReplyArraySize][sequenceNum % 5] = 1;
+        call BeaconResponses.insert(src,
+                                    initialReplyArray[initialReplyArraySize]);
+        initialReplyArraySize++;
+      } else {
+        dbg(GENERAL_CHANNEL,
+            "Node %i cannot be stored as a neighbor! Increase "
+            "initialReplyArray size!",
+            src);
+      }
     }
   }
 
