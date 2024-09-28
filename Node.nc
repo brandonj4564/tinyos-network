@@ -38,8 +38,8 @@ implementation {
     call AMControl.start();
 
     dbg(GENERAL_CHANNEL, "Booted\n");
-    // call NeighborDiscovery.start();
-    call Flooding.start();
+    call NeighborDiscovery.boot();
+    // call Flooding.start();
   }
 
   event void AMControl.startDone(error_t err) {
