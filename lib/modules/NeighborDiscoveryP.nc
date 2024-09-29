@@ -1,51 +1,3 @@
-/**
-The Interface (<name>.nc) file needs to contain a dummy command in the interface
-declaration:
-
-interface <name>{
-    command void pass();
-}
-
-The Configuration (<name>C.nc) file needs both a configuration and
-implementation declaration with relevant code:
-
-configuration  <name>C{
-   provides interface  <name>;
-}
-
-implementation{
-    components  <name>;
-     <name> =  <name>P. <name>;
-}
-
-The imPlementation file (<name>P.nc) file needs both a configuration and
-implementation declaration with relevant code:
-
-module <name>P{
-   provides interface <name>;
-}
-
-implementation{
-    command void <name>.pass(){}
-}
-*/
-
-/*
-TODO:
-1. Have this module gather statistics on neighbors. If a neighbor does not
-respond more than 50% of the time to beacon packets or something, it is not a
-neighbor. Maybe we can do this with hashmaps.
-2. Add a function that can query the neighbor list.
-3. Have this module track an arbitrary number of previous beacon broadcasts, say
-ten for example. Count the number of beacon responses received from each other
-node in a hashmap or something. If the ratio of beacon responses to beacon
-broadcasts is above some arbitrary threshold, that node is a neighbor.
-4. Use one hashmap for each broadcast counted to store information about which
-node responded.
-
-Honestly I don't know exactly how to collect the neighbor statistics.
-*/
-
 module NeighborDiscoveryP {
   // Provides shows the interface we are implementing. See
   // lib/interface/NeighborDiscovery.nc to see what funcitons we need to
@@ -69,6 +21,11 @@ module NeighborDiscoveryP {
 implementation {
   // Variables
 
+  // The number of past beacons tracked. Originally 5. If this variable is
+  // changed, for every comment below that mentions 5 beacons, mentally
+  // substitute the new number.
+  uint16_t beaconsTracked = 5;
+
   // The sequence number doubles as a way to keep track of which array we are
   // currently using to track which nodes have responded to our beacon. This is
   // done by calculating sequenceNum % 5.
@@ -77,7 +34,8 @@ implementation {
   // Stores arrays for 10 potential neighbors, increase storage if necessary
   // Should match the storage allocated to the BeaconResponses hashmap
   uint32_t initialReplyArraySizeLimit = 10;
-  uint32_t initialReplyArray[initialReplyArraySizeLimit][5];
+  uint32_t initialReplyArray[10][5]; // change this if either size limit or
+                                     // beacons tracked changes
   uint16_t initialReplyArraySize = 0;
 
   // Commands and Functions
@@ -106,14 +64,15 @@ implementation {
     for (i = 0; i < call BeaconResponses.size(); i++) {
       uint32_t key = neighborKeys[i];
       uint32_t *replyArray = (uint32_t *)(call BeaconResponses.get(key));
-      float denominator = 5;
+      float denominator = beaconsTracked;
       float numReceived = 0;
       uint16_t j;
 
-      dbg(GENERAL_CHANNEL, "viewing array for node %i\n", key);
+      dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Viewing response array for node %i.\n",
+          key);
 
-      for (j = 0; j < 5; j++) {
-        dbg(GENERAL_CHANNEL, "%i\n", replyArray[j]);
+      for (j = 0; j < beaconsTracked; j++) {
+        dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: %i\n", replyArray[j]);
         numReceived += replyArray[j];
       }
 
@@ -149,7 +108,7 @@ implementation {
     for (i = 0; i < call BeaconResponses.size(); i++) {
       uint32_t *replyArray =
           (uint32_t *)(call BeaconResponses.get(neighborKeys[i]));
-      replyArray[sequenceNum % 5] = 0;
+      replyArray[sequenceNum % beaconsTracked] = 0;
     }
 
     makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_PING,
@@ -160,12 +119,12 @@ implementation {
   }
 
   // Implements the function
-  command void NeighborDiscovery.boot() {
+  command void NeighborDiscovery.start() {
     // Randomly generates a number between 0 and 499 to add to the base value of
     // 5000 ms.
     // Basically the timer will range from 5000 to 5499 ms so there is a slight
     // randomization but not too much.
-    if (TOS_NODE_ID == 5) {
+    if (TOS_NODE_ID == 9) {
       // remove this if statement later, this is just to test neighbor discovery
       // on only node 5
       uint32_t timeInMS = (call Random.rand16() % 1000) + 10000;
@@ -178,9 +137,10 @@ implementation {
     uint32_t *neighbor = (uint32_t *)(call NeighborDiscovery.getNeighbors());
     int size = call NeighborDiscovery.getNumNeighbors();
     int i;
-    // dbg(GENERAL_CHANNEL, "timer fired once\n");
+
     for (i = 0; i < size; i++) {
-      // dbg(GENERAL_CHANNEL, "this node is neighbors with: %i\n", neighbor[i]);
+      dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: This node is neighbors with: %i\n",
+          neighbor[i]);
     }
 
     post sendBeaconPacket();
@@ -200,13 +160,15 @@ implementation {
   command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
     uint16_t src = msg->src;
 
-    // dbg(GENERAL_CHANNEL, "beacon response received from %i\n", msg->src);
+    // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: beacon response received from
+    // %i\n", msg->src);
 
     if (call BeaconResponses.contains(src)) {
       // If the table already has an entry for the src node, get the associated
       // array and update the current array value to 1 since it has replied
       uint32_t *replyArray = (uint32_t *)(call BeaconResponses.get(src));
-      replyArray[sequenceNum % 5] = 1;
+
+      replyArray[sequenceNum % beaconsTracked] = 1;
 
     } else {
       // Src node not in table, create a new array for it and store it in the
@@ -215,19 +177,20 @@ implementation {
         // Ensure the initialReplyArray has enough space to store another array
 
         int i;
-        for (i = 0; i < 5; i++) {
+        for (i = 0; i < beaconsTracked; i++) {
           // set to 0
           initialReplyArray[initialReplyArraySize][i] = 0;
         }
 
-        initialReplyArray[initialReplyArraySize][sequenceNum % 5] = 1;
+        initialReplyArray[initialReplyArraySize][sequenceNum % beaconsTracked] =
+            1;
         call BeaconResponses.insert(src,
                                     initialReplyArray[initialReplyArraySize]);
         initialReplyArraySize++;
       } else {
-        dbg(GENERAL_CHANNEL,
-            "Node %i cannot be stored as a neighbor! Increase "
-            "initialReplyArray size!",
+        dbg(NEIGHBOR_CHANNEL,
+            "NEIGHBOR: Node %i cannot be stored as a neighbor! "
+            "Increase initialReplyArray size!\n",
             src);
       }
     }

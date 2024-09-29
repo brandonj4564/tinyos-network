@@ -5,8 +5,14 @@ implementation {
   Flooding = FloodingP.Flooding;
 
   components new SimpleSendC(AM_PACK);
-  FloodingP.SimpleSend->SimpleSendC;
+  components new HashmapC(uint16_t, 20); // packet cache size
 
-  components new HashmapC(uint16_t, 50);
+  FloodingP.SimpleSend->SimpleSendC;
   FloodingP.NodeTable->HashmapC;
+
+  // Temporary wiring to test NeighborDiscovery, delete after project 1 demo
+  components new TimerMilliC() as Timer;
+  FloodingP.Timer->Timer;
+  components NeighborDiscoveryC;
+  FloodingP.NeighborDiscovery->NeighborDiscoveryC;
 }

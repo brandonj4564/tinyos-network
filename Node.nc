@@ -38,7 +38,7 @@ implementation {
     call AMControl.start();
 
     dbg(GENERAL_CHANNEL, "Booted\n");
-    call NeighborDiscovery.boot();
+    call NeighborDiscovery.start();
     // call Flooding.start();
   }
 

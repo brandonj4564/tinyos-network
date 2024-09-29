@@ -1,5 +1,5 @@
 interface NeighborDiscovery {
-  command void boot();
+  command void start();
 
   // beaconSentReceived is what happens when a node receives a BEACON SEND
   // the node sends a BEACON RESPONSE
