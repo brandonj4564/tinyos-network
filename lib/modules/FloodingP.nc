@@ -22,6 +22,7 @@ module FloodingP {
   uses interface SimpleSend;
 
   uses interface Timer<TMilli>;
+  uses interface Timer<TMilli> as CacheReset;
   uses interface NeighborDiscovery;
 }
 
@@ -47,6 +48,8 @@ implementation {
       dbg(FLOODING_CHANNEL, "FLOODING: Message sent from %i.\n", TOS_NODE_ID);
     }
 
+    call CacheReset.startPeriodic(200000);
+
     // This timer below is purely for testing NeighborDiscovery.getNeighbors()
     // call Timer.startPeriodic(10000);
   }
@@ -62,6 +65,24 @@ implementation {
       dbg(FLOODING_CHANNEL, "FLOODING: This is flooding neighbors: %i\n",
           neighborList[i]);
     }
+  }
+
+  event void CacheReset.fired() {
+    // Reset the soft state of the cache occasionally
+    // Ensures that, if a node dies, it can still send messages later by
+    // forgetting previously high sequences
+
+    uint32_t *tableKeys = (uint32_t *)(call NodeTable.getKeys());
+    uint16_t tableSize = call NodeTable.size();
+    uint16_t i;
+
+    dbg(FLOODING_CHANNEL, "FLOODING: Clearing cache...\n");
+
+    for (i = 0; i < tableSize; i++) {
+      uint32_t key = tableKeys[i];
+      call NodeTable.remove(key);
+    }
+    // God I hope this doesn't have concurrency issues
   }
 
   command void Flooding.sendMessage(uint16_t dest, uint16_t TTL,
@@ -108,11 +129,15 @@ implementation {
           // Hasn't received any messages from the src node yet so NodeTable
           // contains no records
           dbg(FLOODING_CHANNEL, "FLOODING: First time received packet.\n");
+          dbg(FLOODING_CHANNEL, "FLOODING: Flooding message, destination %i.\n",
+              dest);
           call NodeTable.insert(src, msg->seq);
           msg->TTL = msg->TTL - 1; // Reduce TTL
 
           call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
         }
+      } else {
+        dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
       }
     } else {
       // Message reached destination

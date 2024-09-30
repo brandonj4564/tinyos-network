@@ -5,6 +5,7 @@ module NeighborDiscoveryP {
   provides interface NeighborDiscovery;
 
   uses interface Timer<TMilli> as beaconTimer;
+  uses interface Timer<TMilli> as CacheReset;
   uses interface SimpleSend;
   uses interface Random;
 
@@ -16,6 +17,11 @@ module NeighborDiscoveryP {
   // packets sent. If the array is [0, 1, 1, 0, 1], that means the node that
   // corresponds to this array responded to 3 out of the past 5 beacons.
   uses interface Hashmap<uint32_t *> as BeaconResponses;
+
+  // Caches to check if the sequence num of a beacon sent or response message
+  // is lower than previously seen
+  uses interface Hashmap<uint32_t> as BeaconSentCache;
+  uses interface Hashmap<uint32_t> as BeaconResponseCache;
 }
 
 implementation {
@@ -120,15 +126,16 @@ implementation {
 
   // Implements the function
   command void NeighborDiscovery.start() {
-    // Randomly generates a number between 0 and 499 to add to the base value of
-    // 5000 ms.
-    // Basically the timer will range from 5000 to 5499 ms so there is a slight
-    // randomization but not too much.
+    // Randomly generates a number between to add to the base value.
+    // Basically the timer will range from 10000 to 10999 ms so there is a
+    // slight randomization but not too much.
     if (TOS_NODE_ID == 9) {
       // remove this if statement later, this is just to test neighbor discovery
-      // on only node 5
+      // on only node 9
       uint32_t timeInMS = (call Random.rand16() % 1000) + 10000;
       call beaconTimer.startPeriodic(timeInMS);
+
+      call CacheReset.startPeriodic(200000);
     }
   }
 
@@ -146,53 +153,114 @@ implementation {
     post sendBeaconPacket();
   }
 
+  event void CacheReset.fired() {
+    // Reset the soft state of both caches occasionally
+    // Ensures that, if a node dies, it can still send messages later by
+    // forgetting previously high sequences
+
+    uint32_t *sentKeys = (uint32_t *)(call BeaconSentCache.getKeys());
+    uint16_t sentSize = call BeaconSentCache.size();
+    uint32_t *responseKeys = (uint32_t *)(call BeaconResponseCache.getKeys());
+    uint16_t responseSize = call BeaconResponseCache.size();
+
+    uint16_t i;
+
+    dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Clearing caches...\n");
+
+    for (i = 0; i < sentSize; i++) {
+      uint32_t key = sentKeys[i];
+      call BeaconSentCache.remove(key);
+    }
+
+    for (i = 0; i < responseSize; i++) {
+      uint32_t key = responseKeys[i];
+      call BeaconResponseCache.remove(key);
+    }
+    // God I hope this doesn't have concurrency issues
+  }
+
   command void NeighborDiscovery.beaconSentReceived(pack * msg) {
     uint16_t src = msg->src;
+    // Send a beacon reply message with the same sequence number as the beacon
+    // packet
+    uint16_t seq = msg->seq;
     pack beaconResponse;
     uint8_t response[1] = {0}; // Beacon packets don't need a payload
 
-    makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_PINGREPLY, 1,
-             response, sizeof(response));
+    bool validToSend = 1;
+    if (call BeaconSentCache.contains(src)) {
+      // validToSend is only false if cached seq is not smaller than newly
+      // received seq
+      validToSend = call BeaconSentCache.get(src) < seq;
+    } else {
+      call BeaconSentCache.insert(src, seq);
+    }
 
-    call SimpleSend.send(beaconResponse, src);
+    if (validToSend) {
+      makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_PINGREPLY, seq,
+               response, sizeof(response));
+
+      call SimpleSend.send(beaconResponse, src);
+    } else {
+      // seq not higher than one in cache
+      dbg(NEIGHBOR_CHANNEL,
+          "NEIGHBOR: Node %i sent an outdated beacon packet.\n", src);
+    }
   }
 
   command void NeighborDiscovery.beaconResponseReceived(pack * msg) {
     uint16_t src = msg->src;
+    uint16_t seq = msg->seq;
+
+    bool validToSend = 1;
+    if (call BeaconResponseCache.contains(src)) {
+      // validToSend is only false if cached seq is not smaller than newly
+      // received seq
+      validToSend = call BeaconResponseCache.get(src) < seq;
+    } else {
+      call BeaconResponseCache.insert(src, seq);
+    }
 
     // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: beacon response received from
     // %i\n", msg->src);
+    if (validToSend) {
+      if (call BeaconResponses.contains(src)) {
+        // If the table already has an entry for the src node, get the
+        // associated array and update the current array value to 1 since it has
+        // replied
+        uint32_t *replyArray = (uint32_t *)(call BeaconResponses.get(src));
 
-    if (call BeaconResponses.contains(src)) {
-      // If the table already has an entry for the src node, get the associated
-      // array and update the current array value to 1 since it has replied
-      uint32_t *replyArray = (uint32_t *)(call BeaconResponses.get(src));
+        replyArray[sequenceNum % beaconsTracked] = 1;
 
-      replyArray[sequenceNum % beaconsTracked] = 1;
-
-    } else {
-      // Src node not in table, create a new array for it and store it in the
-      // initialReplyArray matrix
-      if (initialReplyArraySize < initialReplyArraySizeLimit) {
-        // Ensure the initialReplyArray has enough space to store another array
-
-        int i;
-        for (i = 0; i < beaconsTracked; i++) {
-          // set to 0
-          initialReplyArray[initialReplyArraySize][i] = 0;
-        }
-
-        initialReplyArray[initialReplyArraySize][sequenceNum % beaconsTracked] =
-            1;
-        call BeaconResponses.insert(src,
-                                    initialReplyArray[initialReplyArraySize]);
-        initialReplyArraySize++;
       } else {
-        dbg(NEIGHBOR_CHANNEL,
-            "NEIGHBOR: Node %i cannot be stored as a neighbor! "
-            "Increase initialReplyArray size!\n",
-            src);
+        // Src node not in table, create a new array for it and store it in the
+        // initialReplyArray matrix
+        if (initialReplyArraySize < initialReplyArraySizeLimit) {
+          // Ensure the initialReplyArray has enough space to store another
+          // array
+
+          int i;
+          for (i = 0; i < beaconsTracked; i++) {
+            // set to 0
+            initialReplyArray[initialReplyArraySize][i] = 0;
+          }
+
+          initialReplyArray[initialReplyArraySize]
+                           [sequenceNum % beaconsTracked] = 1;
+          call BeaconResponses.insert(src,
+                                      initialReplyArray[initialReplyArraySize]);
+          initialReplyArraySize++;
+        } else {
+          dbg(NEIGHBOR_CHANNEL,
+              "NEIGHBOR: Node %i cannot be stored as a neighbor! "
+              "Increase initialReplyArray size!\n",
+              src);
+        }
       }
+    } else {
+      // seq not higher than one in cache
+      dbg(NEIGHBOR_CHANNEL,
+          "NEIGHBOR: Node %i sent an outdated beacon response.\n", src);
     }
   }
 
