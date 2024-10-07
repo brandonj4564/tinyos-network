@@ -14,6 +14,7 @@ implementation {
   components new HashmapC(uint32_t, 20) as BeaconSentCache; // packet cache size
   components new HashmapC(uint32_t, 20)
       as BeaconResponseCache; // packet cache size
+  components MainC;
 
   NeighborDiscoveryP.beaconTimer->beaconTimer;
   NeighborDiscoveryP.CacheReset->CacheReset;
@@ -23,4 +24,5 @@ implementation {
   NeighborDiscoveryP.BeaconResponses->BeaconResponses;
   NeighborDiscoveryP.BeaconSentCache->BeaconSentCache;
   NeighborDiscoveryP.BeaconResponseCache->BeaconResponseCache;
+  NeighborDiscoveryP->MainC.Boot;
 }

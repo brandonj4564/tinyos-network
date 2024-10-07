@@ -21,9 +21,7 @@ module FloodingP {
 
   uses interface SimpleSend;
 
-  uses interface Timer<TMilli>;
   uses interface Timer<TMilli> as CacheReset;
-  uses interface NeighborDiscovery;
 }
 
 implementation {
@@ -45,25 +43,8 @@ implementation {
     if (TOS_NODE_ID == 8) {
       uint8_t payload[1] = {0};
       call Flooding.sendMessage(1, 10, payload, sizeof(payload));
-      dbg(FLOODING_CHANNEL, "FLOODING: Message sent from %i.\n", TOS_NODE_ID);
-    }
 
-    call CacheReset.startPeriodic(200000);
-
-    // This timer below is purely for testing NeighborDiscovery.getNeighbors()
-    // call Timer.startPeriodic(10000);
-  }
-
-  // Tests neighbor discovery, can delete afterwards
-  event void Timer.fired() {
-    uint32_t *neighborList =
-        (uint32_t *)(call NeighborDiscovery.getNeighbors());
-    uint32_t size = call NeighborDiscovery.getNumNeighbors();
-
-    int i;
-    for (i = 0; i < size; i++) {
-      dbg(FLOODING_CHANNEL, "FLOODING: This is flooding neighbors: %i\n",
-          neighborList[i]);
+      call CacheReset.startPeriodic(200000);
     }
   }
 
@@ -76,7 +57,7 @@ implementation {
     uint16_t tableSize = call NodeTable.size();
     uint16_t i;
 
-    dbg(FLOODING_CHANNEL, "FLOODING: Clearing cache...\n");
+    // dbg(FLOODING_CHANNEL, "FLOODING: Clearing cache...\n");
 
     for (i = 0; i < tableSize; i++) {
       uint32_t key = tableKeys[i];
@@ -96,11 +77,24 @@ implementation {
     call SimpleSend.send(message, AM_BROADCAST_ADDR);
   }
 
+  command void Flooding.floodMessage(uint16_t TTL, uint8_t * payload,
+                                     uint8_t length) {
+    // This command is different from sendMessage because sendMessage sends to
+    // one specific node, while floodMessage floods to everybody in the network.
+    // Necessary for informing the network of a node's neighbors
+
+    pack message;
+    makePack(&message, TOS_NODE_ID, AM_BROADCAST_ADDR, TTL,
+             PROTOCOL_FLOODING_ALL, sequenceNum, payload, length);
+    sequenceNum++;
+
+    dbg(FLOODING_CHANNEL, "FLOODING: Message flooded to network.\n");
+    call SimpleSend.send(message, AM_BROADCAST_ADDR);
+  }
+
   command void Flooding.recieveMessage(pack * msg) {
     uint16_t dest = msg->dest;
     uint16_t src = msg->src;
-
-    dbg(FLOODING_CHANNEL, "FLOODING: Message original source is %i.\n", src);
 
     // If this node is not the destination
     if (dest != TOS_NODE_ID) {
@@ -118,26 +112,26 @@ implementation {
             call NodeTable.insert(src, msg->seq);
             msg->TTL = msg->TTL - 1; // Reduce TTL
 
-            dbg(FLOODING_CHANNEL,
-                "FLOODING: Flooding message, destination %i.\n", dest);
-
             call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
           } else {
-            dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
+            // dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
           }
         } else {
           // Hasn't received any messages from the src node yet so NodeTable
           // contains no records
-          dbg(FLOODING_CHANNEL, "FLOODING: First time received packet.\n");
-          dbg(FLOODING_CHANNEL, "FLOODING: Flooding message, destination %i.\n",
-              dest);
+
+          // dbg(FLOODING_CHANNEL, "FLOODING: First time received packet.\n");
+          // dbg(FLOODING_CHANNEL, "FLOODING: Flooding message, destination
+          // %i.\n",
+          //     dest);
+
           call NodeTable.insert(src, msg->seq);
           msg->TTL = msg->TTL - 1; // Reduce TTL
 
           call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
         }
       } else {
-        dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
+        // dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
       }
     } else {
       // Message reached destination

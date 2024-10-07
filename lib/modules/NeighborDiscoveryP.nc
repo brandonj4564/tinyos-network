@@ -8,6 +8,7 @@ module NeighborDiscoveryP {
   uses interface Timer<TMilli> as CacheReset;
   uses interface SimpleSend;
   uses interface Random;
+  uses interface Boot;
 
   // Hashmap
   uses interface Hashmap<uint16_t> as neighborList;
@@ -46,6 +47,16 @@ implementation {
 
   // Commands and Functions
 
+  event void Boot.booted() {
+    // Randomly generates a number between to add to the base value.
+    // Basically the timer will range from 10000 to 10999 ms so there is a
+    // slight randomization but not too much.
+    uint32_t timeInMS = (call Random.rand16() % 1000) + 10000;
+    call beaconTimer.startPeriodic(timeInMS);
+
+    call CacheReset.startPeriodic(200000);
+  }
+
   void makePack(pack * Package, uint16_t src, uint16_t dest, uint16_t TTL,
                 uint16_t protocol, uint16_t seq, uint8_t * payload,
                 uint8_t length) {
@@ -59,8 +70,13 @@ implementation {
 
   void areNeighborsWorthy() {
     // Threshold = 60% out of the past 5, so 3/5
+    // TODO: Change this to an exponential weighted moving average, should be
+    // easy
     float threshold = 0.6;
     uint32_t *neighborKeys = call BeaconResponses.getKeys();
+
+    // Bool variable, has the neighbor list been updated?
+    uint8_t listChanged = 0;
 
     // Index variables to use in loops
     uint16_t i;
@@ -74,17 +90,19 @@ implementation {
       float numReceived = 0;
       uint16_t j;
 
-      dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Viewing response array for node %i.\n",
-          key);
+      // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Viewing response array for node
+      // %i.\n",
+      //     key);
 
       for (j = 0; j < beaconsTracked; j++) {
-        dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: %i\n", replyArray[j]);
+        // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: %i\n", replyArray[j]);
         numReceived += replyArray[j];
       }
 
       if (numReceived / denominator >= threshold) {
         if (!(call neighborList.contains(key))) {
           call neighborList.insert(key, numReceived / denominator);
+          listChanged = 1;
         } else {
           call neighborList.remove(key);
           call neighborList.insert(key, numReceived / denominator);
@@ -92,8 +110,13 @@ implementation {
       } else {
         if (call neighborList.contains(key)) {
           call neighborList.remove(key);
+          listChanged = 1;
         }
       }
+    }
+
+    if (listChanged) {
+      signal NeighborDiscovery.listUpdated();
     }
   }
 
@@ -124,36 +147,7 @@ implementation {
     call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
   }
 
-  // Implements the function
-  command void NeighborDiscovery.start() {
-    // Randomly generates a number between to add to the base value.
-    // Basically the timer will range from 10000 to 10999 ms so there is a
-    // slight randomization but not too much.
-    if (TOS_NODE_ID == 9) {
-      // remove this if statement later, this is just to test neighbor discovery
-      // on only node 9
-      uint32_t timeInMS = (call Random.rand16() % 1000) + 10000;
-      call beaconTimer.startPeriodic(timeInMS);
-
-      call CacheReset.startPeriodic(200000);
-    }
-  }
-
-  event void beaconTimer.fired() {
-    // test: print out all neighbors in the neighbor list
-    uint32_t *neighbor = (uint32_t *)(call NeighborDiscovery.getNeighbors());
-    int size = call NeighborDiscovery.getNumNeighbors();
-    int i;
-
-    for (i = 0; i < size; i++) {
-      dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: This node is neighbors with: %i\n",
-          neighbor[i]);
-    }
-
-    post sendBeaconPacket();
-  }
-
-  event void CacheReset.fired() {
+  task void resetCache() {
     // Reset the soft state of both caches occasionally
     // Ensures that, if a node dies, it can still send messages later by
     // forgetting previously high sequences
@@ -165,7 +159,7 @@ implementation {
 
     uint16_t i;
 
-    dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Clearing caches...\n");
+    // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Clearing caches...\n");
 
     for (i = 0; i < sentSize; i++) {
       uint32_t key = sentKeys[i];
@@ -177,6 +171,27 @@ implementation {
       call BeaconResponseCache.remove(key);
     }
     // God I hope this doesn't have concurrency issues
+  }
+
+  event void beaconTimer.fired() {
+    // test: print out all neighbors in the neighbor list
+
+    // uint32_t *neighbor = (uint32_t *)(call NeighborDiscovery.getNeighbors());
+    // int size = call NeighborDiscovery.getNumNeighbors();
+    // int i;
+    //
+    // for (i = 0; i < size; i++) {
+    //   dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: This node is neighbors with: %i\n",
+    //       neighbor[i]);
+    // }
+
+    post sendBeaconPacket();
+  }
+
+  event void CacheReset.fired() {
+    // Timer interrupt handlers should be as fast as possible, so put code in a
+    // task which can be executed concurrently
+    post resetCache();
   }
 
   command void NeighborDiscovery.beaconSentReceived(pack * msg) {
@@ -251,10 +266,10 @@ implementation {
                                       initialReplyArray[initialReplyArraySize]);
           initialReplyArraySize++;
         } else {
-          dbg(NEIGHBOR_CHANNEL,
-              "NEIGHBOR: Node %i cannot be stored as a neighbor! "
-              "Increase initialReplyArray size!\n",
-              src);
+          // dbg(NEIGHBOR_CHANNEL,
+          //     "NEIGHBOR: Node %i cannot be stored as a neighbor! "
+          //     "Increase initialReplyArray size!\n",
+          //     src);
         }
       }
     } else {

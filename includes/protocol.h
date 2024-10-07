@@ -15,6 +15,7 @@ enum{
 	PROTOCOL_DV = 5,
 	// Protocols for Neighbor Discovery
 	PROTOCOL_FLOODING = 6,
+	PROTOCOL_FLOODING_ALL = 7,
     PROTOCOL_CMD = 99
 };
 

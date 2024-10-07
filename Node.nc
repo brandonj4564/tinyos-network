@@ -38,8 +38,8 @@ implementation {
     call AMControl.start();
 
     dbg(GENERAL_CHANNEL, "Booted\n");
-    call NeighborDiscovery.start();
-    // call Flooding.start();
+
+    call Flooding.start();
   }
 
   event void AMControl.startDone(error_t err) {
@@ -83,10 +83,25 @@ implementation {
     dbg(GENERAL_CHANNEL, "PING EVENT \n");
     makePack(&sendPackage, TOS_NODE_ID, destination, 0, 0, 0, payload,
              PACKET_MAX_PAYLOAD_SIZE);
-    call Sender.send(sendPackage, destination);
+    // call Sender.send(sendPackage, destination);
+    call Flooding.sendMessage(destination, 10, payload,
+                              PACKET_MAX_PAYLOAD_SIZE);
   }
 
-  event void CommandHandler.printNeighbors() {}
+  event void CommandHandler.printNeighbors() {
+    uint32_t *neighborList =
+        (uint32_t *)(call NeighborDiscovery.getNeighbors());
+    uint32_t size = call NeighborDiscovery.getNumNeighbors();
+
+    int i;
+    for (i = 0; i < size; i++) {
+      dbg(GENERAL_CHANNEL, "Neighbors: %i\n", neighborList[i]);
+    }
+  }
+
+  event void NeighborDiscovery.listUpdated() {
+    // dbg(GENERAL_CHANNEL, "the neighborlist is updated\n");
+  }
 
   event void CommandHandler.printRouteTable() {}
 

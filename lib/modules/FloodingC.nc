@@ -11,10 +11,4 @@ implementation {
   FloodingP.SimpleSend->SimpleSendC;
   FloodingP.NodeTable->HashmapC;
   FloodingP.CacheReset->CacheReset;
-
-  // Temporary wiring to test NeighborDiscovery, delete after project 1 demo
-  components new TimerMilliC() as Timer;
-  FloodingP.Timer->Timer;
-  components NeighborDiscoveryC;
-  FloodingP.NeighborDiscovery->NeighborDiscoveryC;
 }
