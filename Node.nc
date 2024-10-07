@@ -22,8 +22,14 @@ module Node {
   uses interface SimpleSend as Sender;
 
   uses interface CommandHandler;
+
+  // Project 1
   uses interface NeighborDiscovery;
   uses interface Flooding;
+
+  // Project 2
+  uses interface LinkState;
+  uses interface InternetProtocol;
 }
 
 implementation {

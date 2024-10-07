@@ -1,0 +1,1 @@
+interface LinkState { command void receiveLSA(pack * msg); }

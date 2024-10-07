@@ -34,7 +34,13 @@ implementation {
   components NeighborDiscoveryC;
   Node.NeighborDiscovery->NeighborDiscoveryC;
 
-  //Wires in Flooding so that Node can access it
+  // Wires in Flooding so that Node can access it
   components FloodingC;
   Node.Flooding->FloodingC;
+
+  components LinkStateC;
+  Node.LinkState->LinkStateC;
+
+  components InternetProtocolC;
+  Node.InternetProtocol->InternetProtocolC;
 }
