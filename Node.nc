@@ -88,7 +88,7 @@ implementation {
     makePack(&sendPackage, TOS_NODE_ID, destination, 0, 0, 0, payload,
              PACKET_MAX_PAYLOAD_SIZE);
     // call Sender.send(sendPackage, destination);
-    call Flooding.sendMessage(destination, 10, payload,
+    call Flooding.sendMessage(destination, 10, PROTOCOL_FLOODING, payload,
                               PACKET_MAX_PAYLOAD_SIZE);
   }
 
