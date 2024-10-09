@@ -1,4 +1,4 @@
-module LinkState {
+module LinkStateP {
   provides interface LinkState;
 
   uses interface NeighborDiscovery;
@@ -10,8 +10,6 @@ module LinkState {
   uses interface Hashmap<uint16_t> as cache;
   uses interface Hashmap<uint16_t> as routingTable;
   uses interface Hashmap<uint16_t> as networkTopo;
-
-  
 }
 
 implementation {
@@ -43,25 +41,23 @@ implementation {
     // start the module
   }
 
+  task void computeRoutingTable() {
+    // Preform Dijkstra
+  }
+
+  event void cacheReset.fired() {
+    // reset cache
+  }
+
   event void NeighborDiscovery.listUpdated() {
     dbg(GENERAL_CHANNEL, "Routing Table will be recalculated\n");
-    computeRoutingTable();
+    post computeRoutingTable();
   }
 
-  command void LinkState.receiveLSA(pack * msg){
-    //recieve neighbor list from other nodes
-    //Add neighbor list to networkTopo configuring it to it's sender node
-     
-
+  command void LinkState.receiveLSA(pack * msg) {
+    // recieve neighbor list from other nodes
+    // Add neighbor list to networkTopo configuring it to it's sender node
   }
 
-  command void LinkState.sendLSA(pack * msg){
-    
-  } 
-
-  task void computeRoutingTable(){
-    //Preform Dijkstra
-
-  }
-
+  command void LinkState.sendLSA(pack * msg) {}
 }

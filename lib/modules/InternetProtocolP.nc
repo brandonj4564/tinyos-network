@@ -1,4 +1,4 @@
-module InternetProtocol { provides interface InternetProtocol; }
+module InternetProtocolP { provides interface InternetProtocol; }
 
 implementation {
   command void InternetProtocol.sendMessage(uint16_t dest, uint16_t TTL,

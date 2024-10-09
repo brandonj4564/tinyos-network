@@ -65,16 +65,14 @@ implementation {
 
     if (len == sizeof(pack)) {
       pack *myMsg = (pack *)payload;
+      uint16_t prtcl = myMsg->protocol;
 
-      if (myMsg->protocol == PROTOCOL_PING) {
+      if (prtcl == PROTOCOL_PING) {
         call NeighborDiscovery.beaconSentReceived(myMsg);
-
-      } else if (myMsg->protocol == PROTOCOL_PINGREPLY) {
+      } else if (prtcl == PROTOCOL_PINGREPLY) {
         call NeighborDiscovery.beaconResponseReceived(myMsg);
-
-      } else if (myMsg->protocol == PROTOCOL_FLOODING) {
-        call Flooding.recieveMessage(myMsg);
-
+      } else if (prtcl == PROTOCOL_FLOODING || prtcl == PROTOCOL_LSA) {
+        call Flooding.receiveMessage(myMsg);
       } else {
         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
       }

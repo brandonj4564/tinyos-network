@@ -20,7 +20,7 @@ module FloodingP {
   uses interface Hashmap<uint16_t> as NodeTable;
 
   uses interface SimpleSend;
-
+  uses interface LinkState;
   uses interface Timer<TMilli> as CacheReset;
 }
 
@@ -77,66 +77,76 @@ implementation {
     call SimpleSend.send(message, AM_BROADCAST_ADDR);
   }
 
-  command void Flooding.floodMessage(uint16_t TTL, uint8_t * payload,
-                                     uint8_t length) {
+  command void Flooding.floodMessage(uint16_t TTL, uint16_t protocol,
+                                     uint8_t * payload, uint8_t length) {
     // This command is different from sendMessage because sendMessage sends to
     // one specific node, while floodMessage floods to everybody in the network.
     // Necessary for informing the network of a node's neighbors
 
     pack message;
-    makePack(&message, TOS_NODE_ID, AM_BROADCAST_ADDR, TTL,
-             PROTOCOL_FLOODING_ALL, sequenceNum, payload, length);
+    makePack(&message, TOS_NODE_ID, AM_BROADCAST_ADDR, TTL, protocol,
+             sequenceNum, payload, length);
     sequenceNum++;
 
     dbg(FLOODING_CHANNEL, "FLOODING: Message flooded to network.\n");
     call SimpleSend.send(message, AM_BROADCAST_ADDR);
   }
 
-  command void Flooding.recieveMessage(pack * msg) {
+  command void Flooding.receiveMessage(pack * msg) {
     uint16_t dest = msg->dest;
     uint16_t src = msg->src;
 
-    // If this node is not the destination
-    if (dest != TOS_NODE_ID) {
+    if (dest == TOS_NODE_ID) {
+      // Message reached destination
+      dbg(FLOODING_CHANNEL,
+          "FLOODING: FINALLY REACHED DESTINATION, SENT FROM %i\n", src);
+      return;
+    }
 
-      // Check TTL and whether or not the current node is the original source
-      if (msg->TTL > 0 && src != TOS_NODE_ID) {
-        // Check with the node table if the sequence is higher than previously
-        // seen
-        if (call NodeTable.contains(src)) {
-          uint16_t highestSeq = call NodeTable.get(src);
+    // Check TTL and whether or not the current node is the original source
+    if (msg->TTL <= 0 || src == TOS_NODE_ID) {
+      // dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
+      return;
+    }
 
-          // If the seq of the message is higher than previously seen, forward
-          if (msg->seq > highestSeq) {
-            call NodeTable.remove(src);
-            call NodeTable.insert(src, msg->seq);
-            msg->TTL = msg->TTL - 1; // Reduce TTL
+    // Check with the node table if the sequence is higher than previously
+    // seen
+    if (call NodeTable.contains(src)) {
+      uint16_t highestSeq = call NodeTable.get(src);
 
-            call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
-          } else {
-            // dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
-          }
-        } else {
-          // Hasn't received any messages from the src node yet so NodeTable
-          // contains no records
+      // If the seq of the message is higher than previously seen, forward
+      if (msg->seq > highestSeq) {
+        call NodeTable.remove(src);
+        call NodeTable.insert(src, msg->seq);
+        msg->TTL = msg->TTL - 1; // Reduce TTL
 
-          // dbg(FLOODING_CHANNEL, "FLOODING: First time received packet.\n");
-          // dbg(FLOODING_CHANNEL, "FLOODING: Flooding message, destination
-          // %i.\n",
-          //     dest);
-
-          call NodeTable.insert(src, msg->seq);
-          msg->TTL = msg->TTL - 1; // Reduce TTL
-
-          call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
+        if (msg->protocol == PROTOCOL_LSA) {
+          // LinkState allows Flooding to handle passing the packet to everybody
+          // in the network, preserving encapsulation
+          call LinkState.receiveLSA(msg);
         }
+
+        call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
       } else {
         // dbg(FLOODING_CHANNEL, "FLOODING: Dropped packet.\n");
       }
     } else {
-      // Message reached destination
-      dbg(FLOODING_CHANNEL,
-          "FLOODING: FINALLY REACHED DESTINATION, SENT FROM %i\n", src);
+      // Hasn't received any messages from the src node yet so NodeTable
+      // contains no records
+
+      // dbg(FLOODING_CHANNEL, "FLOODING: First time received packet.\n");
+      // dbg(FLOODING_CHANNEL, "FLOODING: Flooding message, destination
+      // %i.\n",
+      //     dest);
+
+      call NodeTable.insert(src, msg->seq);
+      msg->TTL = msg->TTL - 1; // Reduce TTL
+
+      if (msg->protocol == PROTOCOL_LSA) {
+        call LinkState.receiveLSA(msg);
+      }
+
+      call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
     }
   }
 }

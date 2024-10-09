@@ -1,5 +1,4 @@
-interface LinkState { 
-    command void receiveLSA(pack * msg); 
-    command void LinkState.sendLSA(pack * msg);
-    
+interface LinkState {
+  command void receiveLSA(pack * msg);
+  command void sendLSA(pack * msg);
 }
