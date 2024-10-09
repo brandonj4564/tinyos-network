@@ -13,6 +13,6 @@ interface NeighborDiscovery {
 
   // returns number of neightbors
   command uint16_t getNumNeighbors();
-
+  
   event void listUpdated();
 }
