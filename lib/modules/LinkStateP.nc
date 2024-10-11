@@ -1,18 +1,18 @@
 module LinkStateP {
   provides interface LinkState;
 
-  uses interface NeighborDiscovery; 
+  uses interface NeighborDiscovery;
 
   uses interface Flooding;
 
   uses interface Boot;
 
-  uses interface Timer<TMilli> as cacheReset;
+  uses interface Timer<TMilli> as CacheReset;
   uses interface Timer<TMilli> as beaconTimer;
 
-  uses interface Hashmap<uint16_t> as cache;
-  uses interface Hashmap<uint16_t> as routingTable;
-  uses interface Hashmap<uint32_t*> as networkTopo;
+  uses interface Hashmap<uint16_t> as Cache;
+  uses interface Hashmap<uint16_t> as RoutingTable;
+  uses interface Hashmap<uint32_t *> as NetworkTopo;
 }
 
 implementation {
@@ -42,71 +42,102 @@ implementation {
 
   uint32_t neighborsArraySizeLimit = 30;
 
-  uint32_t neighborsArray[30][30]; // change this if neighborsArraySizeLimit changes
+  uint32_t neighborsArray[30]
+                         [30]; // change this if neighborsArraySizeLimit changes
   uint16_t neighborsArraySize = 0;
 
   event void Boot.booted() {
     // start the module
-    call cacheReset.startPeriodic(200000);
+    call CacheReset.startPeriodic(200000);
 
-    call beaconTimer.startPeriodic(4060);
-
+    call beaconTimer.startOneShot(4060);
   }
 
   task void computeRoutingTable() {
-    // Preform Dijkstra
+    // Perform Dijkstra
   }
 
-  event void cacheReset.fired() {
+  event void CacheReset.fired() {
     // reset cache
   }
 
   event void beaconTimer.fired() {
-    if(TOS_NODE_ID == 9){
+    if (TOS_NODE_ID == 9) {
       call LinkState.sendLSA();
     }
   }
 
   event void NeighborDiscovery.listUpdated() {
-    dbg(GENERAL_CHANNEL, "Routing Table will be recalculated\n");
+    dbg(GENERAL_CHANNEL,
+        "Neighbor list updated, routing table will be recalculated.\n");
+
+    // Re-send LSA and recompute routing table
+    call LinkState.sendLSA();
     post computeRoutingTable();
   }
 
   command void LinkState.receiveLSA(pack * msg) {
     // recieve neighbor list from other nodes
     // Add neighbor list to networkTopo configuring it to it's sender node
-    uint8_t neighborListSize = msg->payload[0];
-    uint8_t *payload = (uint8_t*)(msg->payload);
+    uint8_t sizeLSA = msg->payload[0];
+    uint8_t *payload = (uint8_t *)(msg->payload);
+    uint16_t src = msg->src;
 
     uint16_t i;
-    for(i = 0; i < neighborListSize; i++){
-      dbg(GENERAL_CHANNEL, "Contents of Payload: %i\n", payload[i + 1]);
-    }
+    // for (i = 0; i < sizeLSA; i++) {
+    //   dbg(GENERAL_CHANNEL, "Contents of Payload: %i\n", payload[i + 1]);
+    // }
 
-    if (neighborsArraySize < neighborsArraySizeLimit) {
-      for(i = 0; i < neighborListSize; i++){
-        neighborsArray[neighborsArraySize][i] = payload[i + 1];
-        call networkTopo.insert(msg->src, neighborsArray[neighborsArraySize]);
-        neighborsArraySize++;
+    if (call NetworkTopo.contains(src)) {
+      // src node updated their neighbor list and sent out a new LSA
+
+      uint32_t *neighborList = (uint32_t *)(call NetworkTopo.get(src));
+      neighborList[0] = sizeLSA;
+
+      for (i = 1; i < sizeLSA + 1; i++) {
+        neighborList[i] = payload[i];
+      }
+
+    } else {
+      if (neighborsArraySize < neighborsArraySizeLimit) {
+        neighborsArray[neighborsArraySize][0] = neighborsListSize;
+
+        for (i = 1; i < sizeLSA + 1; i++) {
+          neighborsArray[neighborsArraySize][i] = payload[i];
+
+          call NetworkTopo.insert(msg->src, neighborsArray[neighborsArraySize]);
+          neighborsArraySize++;
+        }
+
+      } else {
+        dbg(GENERAL_CHANNEL,
+            "Cannot store node %i's neighbor list! Increase "
+            "neighborsArraySizeLimit!\n",
+            msg->src);
       }
     }
-    
-    
+
+    post computeRoutingTable();
   }
 
   command void LinkState.sendLSA() {
+    // Having dest = AM_BROADCAST_ADDR means the message never reaches a
+    // destination and ends so it floods the network
     uint16_t dest = AM_BROADCAST_ADDR;
     uint16_t TTL = 20;
     uint16_t protocol = PROTOCOL_LSA;
-    uint32_t * neighbors = call NeighborDiscovery.getNeighbors() ;
+    uint32_t *neighbors = call NeighborDiscovery.getNeighbors();
     uint8_t length = call NeighborDiscovery.getNumNeighbors();
 
-  uint8_t payload[length + 1];
-  uint16_t i;
-  payload[0] = length;
-  for(i = 1; i < length + 1; i++){
-    payload[i] = neighbors[i - 1];
-  }
+    uint8_t payload[length + 1];
+    uint16_t i;
+
+    // The message structure sends the length of the neighbor list as the first
+    // element, then the neighbor list right after
+    payload[0] = length;
+    for (i = 1; i < length + 1; i++) {
+      payload[i] = neighbors[i - 1];
+    }
 
     call Flooding.sendMessage(dest, TTL, protocol, payload, length + 1);
   }
