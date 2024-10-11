@@ -26,6 +26,4 @@ implementation {
   components new HashmapC(uint16_t, 20) as RoutingTable;
   LinkStateP.RoutingTable->RoutingTable;
 
-  components new HashmapC(uint32_t *, 30) as NetworkTopo;
-  LinkStateP.NetworkTopo->NetworkTopo;
 }
