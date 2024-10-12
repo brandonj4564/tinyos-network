@@ -12,7 +12,7 @@ interface NeighborDiscovery {
   command uint32_t *getNeighbors();
 
   // return array of connection strengths
-  command uint32_t *getNeighborLinkQuality();
+  command float getNeighborLinkQuality(uint32_t neighbor);
 
 
   // returns number of neightbors

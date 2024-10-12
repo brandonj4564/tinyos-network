@@ -11,7 +11,7 @@ module NeighborDiscoveryP {
   uses interface Boot;
 
   // Hashmap
-  uses interface Hashmap<uint16_t> as neighborList;
+  uses interface Hashmap<float> as neighborList;
 
   // This hashmap takes in a node id as a key and stores the pointer of an array
   // of length 5 as the value. This array stores data on the past 5 beacon
@@ -288,17 +288,8 @@ implementation {
     return call neighborList.getKeys();
   }
 
-  command uint32_t * NeighborDiscovery.getNeighborLinkQuality(){
-    uint32_t size = call neighborList.size();
-    uint32_t* neighbors = (uint32_t*) (call neighborList.getKeys());
-    uint32_t connections[size];
-
-    uint8_t i;
-    for(i = 0; i < size; i++){
-      connections[i] = call neighborList.get(neighbors[i]);
-    }
-
-    return connections;
+  command float NeighborDiscovery.getNeighborLinkQuality(uint32_t neighbor){
+    return call neighborList.get(neighbor);
   }
 
 

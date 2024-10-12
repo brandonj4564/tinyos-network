@@ -9,7 +9,7 @@ implementation {
   components RandomC as Random;
   components new SimpleSendC(AM_PACK);
   // Hashmap can store up to 10 neighbors
-  components new HashmapC(uint16_t, 10);
+  components new HashmapC(float, 10);
   components new HashmapC(uint32_t *, 10) as BeaconResponses;
   components new HashmapC(uint32_t, 20) as BeaconSentCache; // packet cache size
   components new HashmapC(uint32_t, 20)
