@@ -31,7 +31,7 @@ implementation {
   // The number of past beacons tracked. Originally 5. If this variable is
   // changed, for every comment below that mentions 5 beacons, mentally
   // substitute the new number.
-  uint16_t beaconsTracked = 5;
+  uint16_t beaconsTracked = 10;
 
   // The sequence number doubles as a way to keep track of which array we are
   // currently using to track which nodes have responded to our beacon. This is
@@ -41,7 +41,7 @@ implementation {
   // Stores arrays for 10 potential neighbors, increase storage if necessary
   // Should match the storage allocated to the BeaconResponses hashmap
   uint32_t initialReplyArraySizeLimit = 10;
-  uint32_t initialReplyArray[10][5]; // change this if either size limit or
+  uint32_t initialReplyArray[10][10]; // change this if either size limit or
                                      // beacons tracked changes
   uint16_t initialReplyArraySize = 0;
 
@@ -68,11 +68,12 @@ implementation {
     memcpy(Package->payload, payload, length);
   }
 
-  void areNeighborsWorthy() {
-    // Threshold = 60% out of the past 5, so 3/5
+  task void areNeighborsWorthy() {
     // TODO: Change this to an exponential weighted moving average, should be
     // easy
-    float threshold = 0.6;
+    float threshold = 0.5;
+    float alpha = 0.3; // Smoothing factor for EWMA
+
     uint32_t *neighborKeys = call BeaconResponses.getKeys();
 
     // Bool variable, has the neighbor list been updated?
@@ -81,13 +82,12 @@ implementation {
     // Index variables to use in loops
     uint16_t i;
 
-    // Go to each hashmap entry and get an array of length 5 which stores which
+    // Go to each hashmap entry and get an array of length 10 which stores which
     // beacons the neighbor has responded to
     for (i = 0; i < call BeaconResponses.size(); i++) {
       uint32_t key = neighborKeys[i];
       uint32_t *replyArray = (uint32_t *)(call BeaconResponses.get(key));
-      float denominator = beaconsTracked;
-      float numReceived = 0;
+      float ewmaValue = 0;
       uint16_t j;
 
       // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: Viewing response array for node
@@ -96,16 +96,19 @@ implementation {
 
       for (j = 0; j < beaconsTracked; j++) {
         // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: %i\n", replyArray[j]);
-        numReceived += replyArray[j];
+
+        // Start with the oldest response which is sequenceNum % beaconsTracked, then move forward with EWMA
+        // This is only guaranteed to be the oldest response if we post this task immediately after incrementing sequenceNum
+        ewmaValue = alpha * replyArray[(sequenceNum + j) % beaconsTracked] + (1 - alpha) * ewmaValue;
       }
 
-      if (numReceived / denominator >= threshold) {
+      if (ewmaValue >= threshold) {
         if (!(call neighborList.contains(key))) {
-          call neighborList.insert(key, numReceived / denominator);
+          call neighborList.insert(key, ewmaValue);
           listChanged = 1;
         } else {
           call neighborList.remove(key);
-          call neighborList.insert(key, numReceived / denominator);
+          call neighborList.insert(key, ewmaValue);
         }
       } else {
         if (call neighborList.contains(key)) {
@@ -129,8 +132,9 @@ implementation {
     uint16_t i;
 
     sequenceNum++;
+
     // Re-evaluates neighbors based on new stats
-    areNeighborsWorthy();
+    post areNeighborsWorthy();
 
     // Forgets data from the oldest beacon sent, assumes all beacons did not
     // respond
@@ -227,18 +231,18 @@ implementation {
     uint16_t src = msg->src;
     uint16_t seq = msg->seq;
 
-    bool validToSend = 1;
+    bool validToReceive = 1;
     if (call BeaconResponseCache.contains(src)) {
-      // validToSend is only false if cached seq is not smaller than newly
+      // validToReceive is only false if cached seq is not smaller than newly
       // received seq
-      validToSend = call BeaconResponseCache.get(src) < seq;
+      validToReceive = call BeaconResponseCache.get(src) < seq;
     } else {
       call BeaconResponseCache.insert(src, seq);
     }
 
     // dbg(NEIGHBOR_CHANNEL, "NEIGHBOR: beacon response received from
     // %i\n", msg->src);
-    if (validToSend) {
+    if (validToReceive) {
       if (call BeaconResponses.contains(src)) {
         // If the table already has an entry for the src node, get the
         // associated array and update the current array value to 1 since it has
@@ -265,6 +269,7 @@ implementation {
           call BeaconResponses.insert(src,
                                       initialReplyArray[initialReplyArraySize]);
           initialReplyArraySize++;
+
         } else {
           // dbg(NEIGHBOR_CHANNEL,
           //     "NEIGHBOR: Node %i cannot be stored as a neighbor! "
@@ -282,6 +287,20 @@ implementation {
   command uint32_t *NeighborDiscovery.getNeighbors() {
     return call neighborList.getKeys();
   }
+
+  command uint32_t * NeighborDiscovery.getNeighborLinkQuality(){
+    uint32_t size = call neighborList.size();
+    uint32_t* neighbors = (uint32_t*) (call neighborList.getKeys());
+    uint32_t connections[size];
+
+    uint8_t i;
+    for(i = 0; i < size; i++){
+      connections[i] = call neighborList.get(neighbors[i]);
+    }
+
+    return connections;
+  }
+
 
   command uint16_t NeighborDiscovery.getNumNeighbors() {
     return call neighborList.size();

@@ -11,6 +11,10 @@ interface NeighborDiscovery {
   // return array of list of neighbors
   command uint32_t *getNeighbors();
 
+  // return array of connection strengths
+  command uint32_t *getNeighborLinkQuality();
+
+
   // returns number of neightbors
   command uint16_t getNumNeighbors();
   

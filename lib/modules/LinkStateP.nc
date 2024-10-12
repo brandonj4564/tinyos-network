@@ -96,12 +96,17 @@ implementation {
       } 
     }
 
-    while(true){
+    while(1){
       uint32_t emptyCheck = 0;
       uint32_t lowValue = maxCost; // low cost comparison
       uint32_t currentLow; // lowest cost node
       uint32_t j;
-
+      uint32_t neighLength;
+      uint32_t tempCost[neighborsArraySizeLimit];
+      //initalize tempCosts
+      for(i = 0; i < numNeighbors; i++){
+      tempCost[i] = cost[i];
+      }
 
       // checks if unconsidered list is empty
       for(i = 0; i < neighborsArraySizeLimit; i++){
@@ -120,16 +125,23 @@ implementation {
         }
       }
       //current low is equal to next node 
-      //get the neighbors of that node and add it to cost in table.
+      //get the neighbors of that node and add it to cost in table.                                                                                          
 
-      uint32_t neighLength = neighborsArray[currentLow][1];
+      neighLength = neighborsArray[currentLow][1];
       for (j = 1; j < neighLength + 1; j++){
         // Remember: Structure of the neighborsArray
-        // [active?, numNeighbors, neighbor1, cost1, neighbor2, cost2...]
-        // [1, 2, 5, -34, 7, -34]
-        cost[neighborsArray[currentLow][j * 2]] = neighborsArray[currentLow][j * 2 + 1];
+        // [active?, numNeighbors, neighbor1, LQ1, neighbor2, LQ2...]
+        // [1, 2, 5, 0.75, 7, 0.2]
+        uint32_t currentNode = neighborsArray[currentLow][j * 2];
+        cost[currentNode] = neighborsArray[currentLow][j * 2 + 1];
+        // adds cost of current low node to the ones of the neighbor nodes 
+        // to get the cost from currentNode(TOS_NOde...).
+        cost[currentNode] += cost[currentLow];
       }
+      //check if the next cost is lower than the one already there 
+      // if(lowValue < cost[currentLow])
     }
+
   }
 
   event void CacheReset.fired() {
@@ -188,13 +200,14 @@ implementation {
     uint16_t dest = AM_BROADCAST_ADDR;
     uint16_t TTL = 20;
     uint16_t protocol = PROTOCOL_LSA;
-    uint32_t *neighbors = call NeighborDiscovery.getNeighbors();
+    uint32_t *neighbors = (uint32_t*) (call NeighborDiscovery.getNeighbors());
+    uint32_t *linkQuality = (uint32_t*) (call NeighborDiscovery.getNeighborLinkQuality());
     uint8_t length = call NeighborDiscovery.getNumNeighbors();
 
     // Payload structure: first item is the number of neighbors
-    // Then it alternates between neighbor id and cost to reach that neighbor
-    // Ex: payload = [2, 1, -34, 3, -34]
-    // 2 neighbors, node 1 with cost -34 and 3 with cost -34
+    // Then it alternates between neighbor id and link quality (LQ) to reach that neighbor
+    // Ex: payload = [2, 1, 0.5, 3, 0.9]
+    // 2 neighbors, node 1 with LQ 0.5 and 3 with LQ 0.9
     uint8_t payload[length * 2 + 1];
     uint16_t i;
     uint16_t currentNeighbor = 0;
@@ -210,8 +223,8 @@ implementation {
       }
       else {
         // Insert cost
-        // Cost is currently a placeholder value
-        payload[i] = 1;
+        // "Cost" is the quality of the link, prioritize better links
+        payload[i] = linkQuality[i];
       }
     }
 
