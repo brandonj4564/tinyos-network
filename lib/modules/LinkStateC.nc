@@ -23,7 +23,6 @@ implementation {
   components new TimerMilliC() as beaconTimer;
   LinkStateP.beaconTimer->beaconTimer;
 
-  components new HashmapC(uint16_t, 20) as RoutingTable;
+  components new HashmapC(uint32_t *, 20) as RoutingTable;
   LinkStateP.RoutingTable->RoutingTable;
-
 }
