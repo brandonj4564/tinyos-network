@@ -11,11 +11,17 @@ module LinkStateP {
   uses interface Timer<TMilli> as beaconTimer;
 
   uses interface Hashmap<uint16_t> as Cache;
-  uses interface Hashmap<uint32_t *> as RoutingTable;
 }
 
 implementation {
   /*
+  IMPORTANT!!!
+  To demonstrate your solution, you should be able to call a function in your
+  Python run script to print out all of the link state advertisements you used
+  to compute the routing table, and to print the contents of the routing table.
+  You may find this more convenient than logging the entire routing table after
+  every change. The command should be: def cmdRouteDMP(destination)
+
   The link state routing module needs to send a node's neighbor list to the
   entire network. This means we need a new Flooding command to flood the
   entire network, not just to one node. Also means we need a new
@@ -45,14 +51,24 @@ implementation {
                          [30]; // change this if neighborsArraySizeLimit changes
 
   uint32_t routingArraySizeLimit = 5;
-  uint32_t routingArray[30][5]; // change second part if routingArraySizeLimit
-                                // changes
+  int routingArray[30][5]; // change second part if routingArraySizeLimit
+                           // changes
   // Routing Array Structure:
   // [valid?, next hop, cost, backup next hop, backup cost]
   // [1, 2, 0.8, 5, 0.9]
 
   event void Boot.booted() {
-    // start the module
+    // Start the module
+    uint32_t i;
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      uint32_t j;
+      routingArray[i][0] = 0;
+      for (j = 1; j < routingArraySizeLimit; j++) {
+        // initialization
+        routingArray[i][j] = -1;
+      }
+    }
+
     call CacheReset.startPeriodic(200000);
 
     call beaconTimer.startOneShot(10000);
@@ -69,26 +85,17 @@ implementation {
   }
 
   task void computeRoutingTable() {
-    // Perform Dijkstra
-    // What we need ----------------------
-    // 1. We need all nodes considered array, use a list??
-    //    The initial node would be the node we are in
-    // 2. for each node in the list make the cost infinity or equal to immediate
-    // 3. While loop going forever
-    // 4. make unconsidered list equal to all nodes except the current node
-    // 5. Then go to the next lowest node.
-    // 6. add it to cosidered, remove from unconsidered.
-    // 7. Look at all neighbors in that node and add those costs to the cost
-    // table
-    // 8. repeat 5 to 7 while also checking if its shorter than the original
-    // cost
-
     // Placeholder infinity for Dijkstra
     uint32_t maxCost = 10000;
 
-    uint32_t cost[neighborsArraySizeLimit];
-    uint32_t secondBestCost[neighborsArraySizeLimit];
-    uint32_t nextHop[neighborsArraySizeLimit];
+    // Store the indices for the structure of routingArray as variables
+    // This improves code readability
+    uint8_t activate = 0;
+    uint8_t nextHop = 1;
+    uint8_t cost = 2;
+    uint8_t backupHop = 3;
+    uint8_t backupCost = 4;
+
     uint32_t nodes[neighborsArraySizeLimit];
     uint32_t unconsidered[neighborsArraySizeLimit];
     // Step 2
@@ -101,16 +108,19 @@ implementation {
     // Initializing the cost array, start with all nodes being "infinity"
     for (i = 0; i < neighborsArraySizeLimit; i++) {
       if (neighborsArray[i][0] == 1) {
-        cost[i] = maxCost;
-        secondBestCost[i] = maxCost;
+        routingArray[i][cost] = maxCost;
+        routingArray[i][backupCost] = maxCost;
         // Creates copy so we can remove later
         unconsidered[i] = 1;
       } else {
         unconsidered[i] = 0;
       }
     }
-    cost[TOS_NODE_ID] = 0;
-    secondBestCost[TOS_NODE_ID] = 0;
+
+    routingArray[TOS_NODE_ID][nextHop] = TOS_NODE_ID;
+    routingArray[TOS_NODE_ID][cost] = 0;
+    routingArray[TOS_NODE_ID][backupHop] = TOS_NODE_ID;
+    routingArray[TOS_NODE_ID][backupCost] = 0;
 
     // This node's immediate neighbors have their cost overwritten
     for (i = 0; i < numNeighbors; i++) {
@@ -118,10 +128,12 @@ implementation {
       uint32_t startingCost = calcLinkToCost(
           call NeighborDiscovery.getNeighborLinkQuality(n) * 100);
       // dbg(GENERAL_CHANNEL, "cost: %i\n", startingCost);
-      cost[n] = startingCost;
-      secondBestCost[n] = startingCost;
+      routingArray[n][cost] = startingCost;
+      routingArray[n][backupCost] = maxCost;
       unconsidered[n] = 1;
-      nextHop[i] = i;
+
+      // Next hop
+      routingArray[n][nextHop] = n;
     }
 
     while (1) {
@@ -129,7 +141,7 @@ implementation {
       uint32_t lowValue = maxCost; // low cost comparison
       uint32_t currentLow;         // lowest cost node id
       uint32_t j;
-      uint32_t neighLength;
+      uint32_t lowestCostNumNeighbors;
 
       // checks if unconsidered list is empty
       for (i = 0; i < neighborsArraySizeLimit; i++) {
@@ -141,9 +153,9 @@ implementation {
 
       for (i = 0; i < neighborsArraySizeLimit; i++) {
         if (unconsidered[i] == 1 &&
-            cost[i] <= lowValue) { // check very carefully later
+            routingArray[i][cost] <= lowValue) { // check very carefully later
           currentLow = i;
-          lowValue = cost[i];
+          lowValue = routingArray[i][cost];
         }
       }
 
@@ -151,24 +163,106 @@ implementation {
       // current low is equal to next node
       // get the neighbors of that node and add it to cost in table.
 
-      neighLength = neighborsArray[currentLow][1];
-      for (j = 1; j < neighLength + 1; j++) {
+      lowestCostNumNeighbors = neighborsArray[currentLow][1];
+
+      if (lowestCostNumNeighbors == 1) {
+        // Only one neighbor means only one path to get to that node
+        // This breaks my backup hop algorithm so I need a special case
+        // I simply copy the backup hop of the sole neighbor
+        int soleNeighbor = neighborsArray[currentLow][2];
+        int soleNeighborLink = neighborsArray[currentLow][3];
+        routingArray[currentLow][backupHop] =
+            routingArray[soleNeighbor][backupHop];
+
+        routingArray[currentLow][backupCost] =
+            routingArray[soleNeighbor][backupCost] +
+            calcLinkToCost(soleNeighborLink);
+      }
+
+      for (j = 1; j < lowestCostNumNeighbors + 1; j++) {
         // Remember: Structure of the neighborsArray
         // [active?, numNeighbors, neighbor1, LQ1, neighbor2, LQ2...]
         // [1, 2, 5, 75, 7, 20]
         uint32_t currentNode = neighborsArray[currentLow][j * 2];
         // adds cost of current low node to the ones of the neighbor nodes
         // to get the cost from currentNode(TOS_NOde...).
-        float tempCost =
-            cost[currentNode] + neighborsArray[currentLow][j * 2 + 1];
-        if (tempCost < cost[currentNode]) {
-          cost[currentNode] = tempCost;
+        int tempCost = routingArray[currentLow][cost] +
+                       calcLinkToCost(neighborsArray[currentLow][j * 2 + 1]);
+
+        routingArray[currentLow][activate] = 1;
+
+        if (tempCost < routingArray[currentNode][cost]) {
+
           // store the next hop from currentNode, working backwords
-          nextHop[currentNode] = currentLow;
-        } else if (tempCost < secondBestCost[currentNode]) {
-          secondBestCost[currentNode] = tempCost;
+          if (routingArray[currentLow][nextHop] !=
+              routingArray[currentNode][nextHop]) {
+
+            routingArray[currentNode][backupCost] =
+                routingArray[currentNode][cost];
+
+            // Swap the backup next hop with the current next hop
+            routingArray[currentNode][backupHop] =
+                routingArray[currentNode][nextHop];
+          }
+
+          routingArray[currentNode][nextHop] =
+              routingArray[currentLow][nextHop];
+          routingArray[currentNode][cost] = tempCost;
+        } else if (tempCost < routingArray[currentNode][backupCost]) {
+          // TODO: Make backup next hop actually work
+          if (routingArray[currentLow][nextHop] !=
+              routingArray[currentNode][nextHop]) {
+            // Only update backup next hop if it is different from the normal
+            // next hop
+            routingArray[currentNode][backupCost] = tempCost;
+            routingArray[currentNode][backupHop] =
+                routingArray[currentLow][nextHop];
+          }
         }
       }
+    }
+
+    if (TOS_NODE_ID == 3) {
+      for (i = 0; i < neighborsArraySizeLimit; i++) {
+        int k;
+        dbg(GENERAL_CHANNEL, "Neighbors array for node %i.\n", i);
+        dbg(GENERAL_CHANNEL, "Active: %i\n", neighborsArray[i][0]);
+        dbg(GENERAL_CHANNEL, "Num neighbors: %i\n", neighborsArray[i][1]);
+
+        for (k = 0; k < neighborsArray[i][1]; k++) {
+          dbg(GENERAL_CHANNEL, "Neighbor: %i\n", neighborsArray[i][k * 2 + 2]);
+          dbg(GENERAL_CHANNEL, "LQ: %i\n", neighborsArray[i][k * 2 + 3]);
+        }
+      }
+
+      for (i = 0; i < neighborsArraySizeLimit; i++) {
+        if (routingArray[i][activate] == 1) {
+          dbg(GENERAL_CHANNEL, "Routing for node %i.\n", i);
+          dbg(GENERAL_CHANNEL, "Active: %i\n", routingArray[i][activate]);
+          dbg(GENERAL_CHANNEL, "Next hop: %i\n", routingArray[i][nextHop]);
+          dbg(GENERAL_CHANNEL, "Next hop cost: %i\n", routingArray[i][cost]);
+          dbg(GENERAL_CHANNEL, "Backup hop: %i\n", routingArray[i][backupHop]);
+          dbg(GENERAL_CHANNEL, "Backup hop cost: %i\n",
+              routingArray[i][backupCost]);
+        }
+      }
+    }
+  }
+
+  command int LinkState.getNextHop(int dest) {
+    // Check if dest in bounds
+    if (dest < 0 || dest >= neighborsArraySizeLimit) {
+      return -1;
+    }
+
+    if (!routingArray[dest][0]) {
+      // Routing table not activated for this destination
+      return -1;
+    } else {
+      // Routing array structure:
+      // [active?, next hop, cost, backup next hop, backup cost]
+      int nextHop = routingArray[dest][1];
+      return nextHop;
     }
   }
 
@@ -187,9 +281,9 @@ implementation {
         "Neighbor list updated, routing table will be recalculated.\n");
 
     // Re-send LSA and recompute routing table
-    if (TOS_NODE_ID == 9) {
-      call LinkState.sendLSA();
-    }
+    // if (TOS_NODE_ID == 9) {
+    call LinkState.sendLSA();
+    // }
     post computeRoutingTable();
   }
 
@@ -201,10 +295,10 @@ implementation {
     uint16_t src = msg->src;
 
     uint16_t i;
-    dbg(GENERAL_CHANNEL, "LSA from %i\n", src);
-    for (i = 0; i < sizeLSA; i++) {
-      dbg(GENERAL_CHANNEL, "Contents of Payload: %i\n", payload[i]);
-    }
+    // dbg(GENERAL_CHANNEL, "LSA from %i\n", src);
+    // for (i = 0; i < sizeLSA; i++) {
+    //   dbg(GENERAL_CHANNEL, "Contents of Payload: %i\n", payload[i]);
+    // }
 
     if (src >= neighborsArraySizeLimit) {
       dbg(GENERAL_CHANNEL,
@@ -227,7 +321,7 @@ implementation {
     // destination and ends so it floods the network
     uint16_t dest = AM_BROADCAST_ADDR;
     uint16_t TTL = 20;
-    uint16_t protocol = PROTOCOL_LSA;
+    uint16_t protocol = PROTOCOL_LINKSTATE;
     uint32_t *neighbors = (uint32_t *)(call NeighborDiscovery.getNeighbors());
     uint8_t length = call NeighborDiscovery.getNumNeighbors();
 

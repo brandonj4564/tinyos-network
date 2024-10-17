@@ -42,7 +42,8 @@ implementation {
     // Test function, only sends a flooding packet from one node
     if (TOS_NODE_ID == 8) {
       uint8_t payload[1] = {0};
-      call Flooding.sendMessage(1, 10, PROTOCOL_FLOODING, payload, sizeof(payload));
+      call Flooding.sendMessage(1, 10, PROTOCOL_FLOODING, payload,
+                                sizeof(payload));
 
       call CacheReset.startPeriodic(200000);
     }
@@ -66,11 +67,12 @@ implementation {
     // God I hope this doesn't have concurrency issues
   }
 
-  command void Flooding.sendMessage(uint16_t dest, uint16_t TTL, uint16_t protocol,
-                                    uint8_t * payload, uint8_t length) {
+  command void Flooding.sendMessage(uint16_t dest, uint16_t TTL,
+                                    uint16_t protocol, uint8_t * payload,
+                                    uint8_t length) {
     pack message;
-    makePack(&message, TOS_NODE_ID, dest, TTL, protocol, sequenceNum,
-             payload, length);
+    makePack(&message, TOS_NODE_ID, dest, TTL, protocol, sequenceNum, payload,
+             length);
     sequenceNum++;
 
     dbg(FLOODING_CHANNEL, "FLOODING: Message sent to %i.\n", dest);
@@ -105,7 +107,7 @@ implementation {
         call NodeTable.insert(src, msg->seq);
         msg->TTL = msg->TTL - 1; // Reduce TTL
 
-        if (msg->protocol == PROTOCOL_LSA) {
+        if (msg->protocol == PROTOCOL_LINKSTATE) {
           // LinkState allows Flooding to handle passing the packet to everybody
           // in the network, preserving encapsulation
           call LinkState.receiveLSA(msg);
@@ -127,7 +129,7 @@ implementation {
       call NodeTable.insert(src, msg->seq);
       msg->TTL = msg->TTL - 1; // Reduce TTL
 
-      if (msg->protocol == PROTOCOL_LSA) {
+      if (msg->protocol == PROTOCOL_LINKSTATE) {
         call LinkState.receiveLSA(msg);
       }
 

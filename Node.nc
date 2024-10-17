@@ -71,7 +71,7 @@ implementation {
         call NeighborDiscovery.beaconSentReceived(myMsg);
       } else if (prtcl == PROTOCOL_PINGREPLY) {
         call NeighborDiscovery.beaconResponseReceived(myMsg);
-      } else if (prtcl == PROTOCOL_FLOODING || prtcl == PROTOCOL_LSA) {
+      } else if (prtcl == PROTOCOL_FLOODING || prtcl == PROTOCOL_LINKSTATE) {
         call Flooding.receiveMessage(myMsg);
       } else {
         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
