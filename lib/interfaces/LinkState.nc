@@ -1,5 +1,7 @@
 interface LinkState {
   command void receiveLSA(pack * msg);
   command void sendLSA();
-  command int getNextHop(int dest);
+
+  // If backup is true, return backup hop
+  command int getNextHop(int dest, bool backup);
 }

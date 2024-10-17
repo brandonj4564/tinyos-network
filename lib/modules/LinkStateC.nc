@@ -20,6 +20,6 @@ implementation {
   components new TimerMilliC() as CacheReset;
   LinkStateP.CacheReset->CacheReset;
 
-  components new TimerMilliC() as beaconTimer;
-  LinkStateP.beaconTimer->beaconTimer;
+  components new TimerMilliC() as InitialDelay;
+  LinkStateP.InitialDelay->InitialDelay;
 }

@@ -96,6 +96,16 @@ implementation {
       return;
     }
 
+    if (msg->protocol == PROTOCOL_LINKSTATE) {
+      // LinkState allows Flooding to handle passing the packet to everybody
+      // in the network, preserving encapsulation
+
+      // Note that this if statement skips checking if the LSA has a lower seq
+      // than the flooding cache has stored.
+      // This is on purpose. We want to handle the cache in LinkState, not here.
+      call LinkState.receiveLSA(msg);
+    }
+
     // Check with the node table if the sequence is higher than previously
     // seen
     if (call NodeTable.contains(src)) {
@@ -106,12 +116,6 @@ implementation {
         call NodeTable.remove(src);
         call NodeTable.insert(src, msg->seq);
         msg->TTL = msg->TTL - 1; // Reduce TTL
-
-        if (msg->protocol == PROTOCOL_LINKSTATE) {
-          // LinkState allows Flooding to handle passing the packet to everybody
-          // in the network, preserving encapsulation
-          call LinkState.receiveLSA(msg);
-        }
 
         call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
       } else {
@@ -128,10 +132,6 @@ implementation {
 
       call NodeTable.insert(src, msg->seq);
       msg->TTL = msg->TTL - 1; // Reduce TTL
-
-      if (msg->protocol == PROTOCOL_LINKSTATE) {
-        call LinkState.receiveLSA(msg);
-      }
 
       call SimpleSend.send(*msg, AM_BROADCAST_ADDR);
     }

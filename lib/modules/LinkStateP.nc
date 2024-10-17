@@ -8,7 +8,7 @@ module LinkStateP {
   uses interface Boot;
 
   uses interface Timer<TMilli> as CacheReset;
-  uses interface Timer<TMilli> as beaconTimer;
+  uses interface Timer<TMilli> as InitialDelay;
 
   uses interface Hashmap<uint16_t> as Cache;
 }
@@ -21,29 +21,10 @@ implementation {
   to compute the routing table, and to print the contents of the routing table.
   You may find this more convenient than logging the entire routing table after
   every change. The command should be: def cmdRouteDMP(destination)
-
-  The link state routing module needs to send a node's neighbor list to the
-  entire network. This means we need a new Flooding command to flood the
-  entire network, not just to one node. Also means we need a new
-  PROTOCOL_LINK_STATE for packets. We need a cache that tracks sequence
-  number.
-
-  Need some data structure, probably a 2d array alongside a hashmap similar to
-  NeighborDiscovery, to store a node's neighbors and cost to reach said
-  neighbor.
-
-  We need to implement Dijkstra's algorithm, probably in the form of a task.
-  Before performing Dijkstra, we need to wait until the node has a good enough
-  understanding of the network in total. We can do this with a timer.
-
-  Rerun Dijkstra after any change to the network topography occurs. The output
-  from Dijkstra should be stored in the routing table.
-
-  The routing table should probably be a hashmap that stores a pointer to an
-  array again. The key is the final destination node, and the array stores the
-  next hop, the cost, a backup next hop, and the backup cost. This routing
-  table needs to be accessed by InternetProtocol.
   */
+
+  // Wait until time has passed before allowing Dijkstra to run
+  bool allowComputeRouting = 0;
 
   uint32_t neighborsArraySizeLimit = 30;
 
@@ -71,7 +52,11 @@ implementation {
 
     call CacheReset.startPeriodic(200000);
 
-    call beaconTimer.startOneShot(10000);
+    // This should be longer than the timer for NeighborDiscovery, which
+    // currently is about 11000 ms
+    // Please remember to change this value if NeighborDiscovery timer is
+    // changed!
+    call InitialDelay.startOneShot(12000);
   }
 
   uint32_t calcLinkToCost(int link) {
@@ -152,8 +137,7 @@ implementation {
       }
 
       for (i = 0; i < neighborsArraySizeLimit; i++) {
-        if (unconsidered[i] == 1 &&
-            routingArray[i][cost] <= lowValue) { // check very carefully later
+        if (unconsidered[i] == 1 && routingArray[i][cost] <= lowValue) {
           currentLow = i;
           lowValue = routingArray[i][cost];
         }
@@ -249,7 +233,7 @@ implementation {
     }
   }
 
-  command int LinkState.getNextHop(int dest) {
+  command int LinkState.getNextHop(int dest, bool backup) {
     // Check if dest in bounds
     if (dest < 0 || dest >= neighborsArraySizeLimit) {
       return -1;
@@ -262,29 +246,38 @@ implementation {
       // Routing array structure:
       // [active?, next hop, cost, backup next hop, backup cost]
       int nextHop = routingArray[dest][1];
+      if (backup) {
+        nextHop = routingArray[dest][3];
+      }
+
       return nextHop;
     }
   }
 
   event void CacheReset.fired() {
-    // reset cache
-  }
+    uint32_t *tableKeys = (uint32_t *)(call Cache.getKeys());
+    uint16_t tableSize = call Cache.size();
+    uint16_t i;
 
-  event void beaconTimer.fired() {
-    if (TOS_NODE_ID == 9) {
-      call LinkState.sendLSA();
+    for (i = 0; i < tableSize; i++) {
+      uint32_t key = tableKeys[i];
+      call Cache.remove(key);
     }
   }
+
+  // Only begin running Dijkstra after learning about the complete topology
+  event void InitialDelay.fired() { allowComputeRouting = 1; }
 
   event void NeighborDiscovery.listUpdated() {
     dbg(GENERAL_CHANNEL,
         "Neighbor list updated, routing table will be recalculated.\n");
 
     // Re-send LSA and recompute routing table
-    // if (TOS_NODE_ID == 9) {
     call LinkState.sendLSA();
-    // }
-    post computeRoutingTable();
+
+    if (allowComputeRouting) {
+      post computeRoutingTable();
+    }
   }
 
   command void LinkState.receiveLSA(pack * msg) {
@@ -293,8 +286,22 @@ implementation {
     uint16_t sizeLSA = msg->payload[0] * 2 + 1;
     uint8_t *payload = (uint8_t *)(msg->payload);
     uint16_t src = msg->src;
+    uint16_t seq = msg->seq;
 
     uint16_t i;
+
+    // Check cache for higher seq
+    if (call Cache.contains(src)) {
+      if (seq <= call Cache.get(src)) {
+        return; // Lower seq
+      } else {
+        call Cache.remove(src); // Update seq
+        call Cache.insert(src, seq);
+      }
+    } else {
+      call Cache.insert(src, seq); // First time receiving
+    }
+
     // dbg(GENERAL_CHANNEL, "LSA from %i\n", src);
     // for (i = 0; i < sizeLSA; i++) {
     //   dbg(GENERAL_CHANNEL, "Contents of Payload: %i\n", payload[i]);
@@ -313,7 +320,9 @@ implementation {
       neighborsArray[src][i + 1] = payload[i];
     }
 
-    post computeRoutingTable();
+    if (allowComputeRouting) {
+      post computeRoutingTable();
+    }
   }
 
   command void LinkState.sendLSA() {
