@@ -149,7 +149,8 @@ implementation {
 
       lowestCostNumNeighbors = neighborsArray[currentLow][1];
 
-      if (lowestCostNumNeighbors == 1) {
+      if (lowestCostNumNeighbors == 1 &&
+          neighborsArray[currentLow][3] < maxCost) {
         // Only one neighbor means only one path to get to that node
         // This breaks my backup hop algorithm so I need a special case
         // I simply copy the backup hop of the sole neighbor
@@ -206,31 +207,33 @@ implementation {
       }
     }
 
-    if (TOS_NODE_ID == 3) {
-      for (i = 0; i < neighborsArraySizeLimit; i++) {
-        int k;
-        dbg(GENERAL_CHANNEL, "Neighbors array for node %i.\n", i);
-        dbg(GENERAL_CHANNEL, "Active: %i\n", neighborsArray[i][0]);
-        dbg(GENERAL_CHANNEL, "Num neighbors: %i\n", neighborsArray[i][1]);
+    //   if (TOS_NODE_ID == 3) {
+    //     for (i = 0; i < neighborsArraySizeLimit; i++) {
+    //       int k;
+    //       dbg(GENERAL_CHANNEL, "Neighbors array for node %i.\n", i);
+    //       dbg(GENERAL_CHANNEL, "Active: %i\n", neighborsArray[i][0]);
+    //       dbg(GENERAL_CHANNEL, "Num neighbors: %i\n", neighborsArray[i][1]);
 
-        for (k = 0; k < neighborsArray[i][1]; k++) {
-          dbg(GENERAL_CHANNEL, "Neighbor: %i\n", neighborsArray[i][k * 2 + 2]);
-          dbg(GENERAL_CHANNEL, "LQ: %i\n", neighborsArray[i][k * 2 + 3]);
-        }
-      }
+    //       for (k = 0; k < neighborsArray[i][1]; k++) {
+    //         dbg(GENERAL_CHANNEL, "Neighbor: %i\n", neighborsArray[i][k * 2 +
+    //         2]); dbg(GENERAL_CHANNEL, "LQ: %i\n", neighborsArray[i][k * 2 +
+    //         3]);
+    //       }
+    //     }
 
-      for (i = 0; i < neighborsArraySizeLimit; i++) {
-        if (routingArray[i][activate] == 1) {
-          dbg(GENERAL_CHANNEL, "Routing for node %i.\n", i);
-          dbg(GENERAL_CHANNEL, "Active: %i\n", routingArray[i][activate]);
-          dbg(GENERAL_CHANNEL, "Next hop: %i\n", routingArray[i][nextHop]);
-          dbg(GENERAL_CHANNEL, "Next hop cost: %i\n", routingArray[i][cost]);
-          dbg(GENERAL_CHANNEL, "Backup hop: %i\n", routingArray[i][backupHop]);
-          dbg(GENERAL_CHANNEL, "Backup hop cost: %i\n",
-              routingArray[i][backupCost]);
-        }
-      }
-    }
+    //     for (i = 0; i < neighborsArraySizeLimit; i++) {
+    //       if (routingArray[i][activate] == 1) {
+    //         dbg(GENERAL_CHANNEL, "Routing for node %i.\n", i);
+    //         dbg(GENERAL_CHANNEL, "Active: %i\n", routingArray[i][activate]);
+    //         dbg(GENERAL_CHANNEL, "Next hop: %i\n", routingArray[i][nextHop]);
+    //         dbg(GENERAL_CHANNEL, "Next hop cost: %i\n",
+    //         routingArray[i][cost]); dbg(GENERAL_CHANNEL, "Backup hop: %i\n",
+    //         routingArray[i][backupHop]); dbg(GENERAL_CHANNEL, "Backup hop
+    //         cost: %i\n",
+    //             routingArray[i][backupCost]);
+    //       }
+    //     }
+    //   }
   }
 
   command int LinkState.getNextHop(int dest, bool backup) {
@@ -269,9 +272,6 @@ implementation {
   event void InitialDelay.fired() { allowComputeRouting = 1; }
 
   event void NeighborDiscovery.listUpdated() {
-    dbg(GENERAL_CHANNEL,
-        "Neighbor list updated, routing table will be recalculated.\n");
-
     // Re-send LSA and recompute routing table
     call LinkState.sendLSA();
 

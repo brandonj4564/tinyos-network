@@ -73,6 +73,8 @@ implementation {
         call NeighborDiscovery.beaconResponseReceived(myMsg);
       } else if (prtcl == PROTOCOL_FLOODING || prtcl == PROTOCOL_LINKSTATE) {
         call Flooding.receiveMessage(myMsg);
+      } else if (prtcl == PROTOCOL_INTERNET) {
+        call InternetProtocol.receiveMessage(myMsg);
       } else {
         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
       }
@@ -88,8 +90,9 @@ implementation {
     makePack(&sendPackage, TOS_NODE_ID, destination, 0, 0, 0, payload,
              PACKET_MAX_PAYLOAD_SIZE);
     // call Sender.send(sendPackage, destination);
-    call Flooding.sendMessage(destination, 10, PROTOCOL_FLOODING, payload,
-                              PACKET_MAX_PAYLOAD_SIZE);
+
+    call InternetProtocol.sendMessage(destination, 10, payload,
+                                      PACKET_MAX_PAYLOAD_SIZE);
   }
 
   event void CommandHandler.printNeighbors() {

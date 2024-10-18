@@ -13,8 +13,8 @@ enum{
 	PROTOCOL_NAME = 3,
 	PROTOCOL_TCP= 4,
 	PROTOCOL_DV = 5,
-	// Protocols for Neighbor Discovery
 	PROTOCOL_FLOODING = 6,
+	PROTOCOL_INTERNET = 7,
     PROTOCOL_CMD = 99
 };
 
