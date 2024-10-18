@@ -110,9 +110,30 @@ implementation {
     // dbg(GENERAL_CHANNEL, "the neighborlist is updated\n");
   }
 
-  event void CommandHandler.printRouteTable() {}
+  event void CommandHandler.printRouteTable() {
+    int numRoutes = call LinkState.getNumActiveRoutes();
+    int routes[numRoutes];
+    int i;
+    call LinkState.getActiveRoutes(routes); // Assigns routes
 
-  event void CommandHandler.printLinkState() {}
+    dbg(GENERAL_CHANNEL, "Printing routing table, if a node is not "
+                         "printed then it does not have a valid route.\n");
+
+    for (i = 0; i < numRoutes; i++) {
+      int node = routes[i];
+      dbg(GENERAL_CHANNEL,
+          "Dest: %i | Next Hop: %i | Cost %i | Backup Hop: %i | Backup Cost: "
+          "%i\n",
+          node, call LinkState.getNextHop(node, 0),
+          call LinkState.getCost(node, 0), call LinkState.getNextHop(node, 1),
+          call LinkState.getCost(node, 1));
+    }
+  }
+
+  event void CommandHandler.printLinkState() {
+    dbg(GENERAL_CHANNEL, "Printing out all LSAs stored in this node.\n");
+    call LinkState.printAllLSA();
+  }
 
   event void CommandHandler.printDistanceVector() {}
 

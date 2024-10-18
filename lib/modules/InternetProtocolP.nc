@@ -55,6 +55,7 @@ implementation {
       // Message reached destination
       dbg(GENERAL_CHANNEL, "IP: FINALLY REACHED DESTINATION, SENT FROM %i\n",
           src);
+      dbg(GENERAL_CHANNEL, "Payload: %s\n", (char *)msg->payload);
       return;
     }
 

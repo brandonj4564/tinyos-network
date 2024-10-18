@@ -81,7 +81,6 @@ implementation {
     uint8_t backupHop = 3;
     uint8_t backupCost = 4;
 
-    uint32_t nodes[neighborsArraySizeLimit];
     uint32_t unconsidered[neighborsArraySizeLimit];
     // Step 2
     uint32_t *immNeighbors =
@@ -254,6 +253,71 @@ implementation {
       }
 
       return nextHop;
+    }
+  }
+
+  command int LinkState.getCost(int dest, bool backup) {
+    // Check if dest in bounds
+    if (dest < 0 || dest >= neighborsArraySizeLimit) {
+      return -1;
+    }
+
+    if (!routingArray[dest][0]) {
+      // Routing table not activated for this destination
+      return -1;
+    } else {
+      // Routing array structure:
+      // [active?, next hop, cost, backup next hop, backup cost]
+      int cost = routingArray[dest][2];
+      if (backup) {
+        cost = routingArray[dest][4];
+      }
+
+      return cost;
+    }
+  }
+
+  command void LinkState.getActiveRoutes(int *routes) {
+    int i;
+    int currentIndex;
+
+    currentIndex = 0;
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      if (routingArray[i][0] == 1) {
+        routes[currentIndex] = i;
+        currentIndex++;
+      }
+    }
+  }
+
+  command int LinkState.getNumActiveRoutes() {
+    int i;
+    int num = 0;
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      if (routingArray[i][0] == 1) {
+        num++;
+      }
+    }
+
+    return num;
+  }
+
+  command void LinkState.printAllLSA() {
+    int i;
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      if (neighborsArray[i][0] == 1) {
+        // Remember: Structure of the neighborsArray
+        // [active?, numNeighbors, neighbor1, LQ1, neighbor2, LQ2...]
+        // [1, 2, 5, 75, 7, 20]
+        int numNeighbors = neighborsArray[i][1];
+        int j;
+
+        dbg(GENERAL_CHANNEL, "LSA from node %i\n", i);
+        for (j = 1; j < numNeighbors + 1; j++) {
+          dbg(GENERAL_CHANNEL, "Neighbor: %i | Link Quality: %i\n",
+              neighborsArray[i][j * 2], neighborsArray[i][j * 2 + 1]);
+        }
+      }
     }
   }
 

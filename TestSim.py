@@ -14,6 +14,7 @@ class TestSim:
     # COMMAND TYPES
     CMD_PING = 0
     CMD_NEIGHBOR_DUMP = 1
+    CMD_LINKSTATE_DUMP = 2
     CMD_ROUTE_DUMP=3
 
     # CHANNELS - see includes/channels.h
@@ -118,14 +119,14 @@ class TestSim:
         self.pkt.setDestination(dest)
         self.pkt.deliver(dest, self.t.time()+5)
 
-    # TODO: Tie the ping command to Flooding.sendMessage()
     def ping(self, source, dest, msg):
         self.sendCMD(self.CMD_PING, source, "{0}{1}".format(chr(dest),msg));
     
-    # TODO: make a pingReply command and tie it to Flooding send reply
-
     def neighborDMP(self, destination):
         self.sendCMD(self.CMD_NEIGHBOR_DUMP, destination, "neighbor command");
+    
+    def linkstateDMP(self, destination):
+        self.sendCMD(self.CMD_LINKSTATE_DUMP, destination, "linkstate command");
 
     def routeDMP(self, destination):
         self.sendCMD(self.CMD_ROUTE_DUMP, destination, "routing command");
@@ -152,6 +153,9 @@ def main():
     s.runTime(10);
     s.ping(8, 1, "Hi!");
     s.runTime(20);
+    s.routeDMP(6);
+    # s.linkstateDMP(3);
+    s.runTime(10);
 
 if __name__ == '__main__':
     main()
