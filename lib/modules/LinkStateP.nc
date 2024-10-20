@@ -74,7 +74,13 @@ implementation {
     // So a perfect connection link is about 110 cost
   }
 
-  task void computeRoutingTable() {
+  void runDijkstra(uint32_t * immNeighbors, uint32_t numNeighbors,
+                   int disabledNeighbor) {
+    uint32_t unconsidered[neighborsArraySizeLimit];
+    int tempRoutingArray[neighborsArraySizeLimit][routingArraySizeLimit];
+
+    uint32_t i;
+
     // Placeholder infinity for Dijkstra
     uint32_t maxCost = 10000;
 
@@ -85,16 +91,6 @@ implementation {
     uint8_t cost = 2;
     uint8_t backupHop = 3;
     uint8_t backupCost = 4;
-
-    uint32_t unconsidered[neighborsArraySizeLimit];
-    // Step 2
-    uint32_t *immNeighbors =
-        (uint32_t *)(call NeighborDiscovery.getNeighbors());
-    uint32_t numNeighbors = call NeighborDiscovery.getNumNeighbors();
-
-    uint32_t i;
-
-    resetRoutingTable();
 
     // Initializing the cost array, start with all nodes being "infinity"
     for (i = 0; i < neighborsArraySizeLimit; i++) {
@@ -116,15 +112,18 @@ implementation {
     // This node's immediate neighbors have their cost overwritten
     for (i = 0; i < numNeighbors; i++) {
       uint32_t n = immNeighbors[i];
-      uint32_t startingCost = calcLinkToCost(
-          call NeighborDiscovery.getNeighborLinkQuality(n) * 100);
-      // dbg(GENERAL_CHANNEL, "cost: %i\n", startingCost);
-      routingArray[n][cost] = startingCost;
-      routingArray[n][backupCost] = maxCost;
-      unconsidered[n] = 1;
 
-      // Next hop
-      routingArray[n][nextHop] = n;
+      if (n != disabledNeighbor) {
+        uint32_t startingCost = calcLinkToCost(
+            call NeighborDiscovery.getNeighborLinkQuality(n) * 100);
+        // dbg(GENERAL_CHANNEL, "cost: %i\n", startingCost);
+        routingArray[n][cost] = startingCost;
+        // routingArray[n][backupCost] = maxCost;
+
+        // Next hop
+        routingArray[n][nextHop] = n;
+      }
+      unconsidered[n] = 1;
     }
 
     while (1) {
@@ -201,6 +200,7 @@ implementation {
           routingArray[currentNode][cost] = tempCost;
         } else if (tempCost < routingArray[currentNode][backupCost]) {
           // TODO: Make backup next hop actually work
+
           if (routingArray[currentLow][nextHop] !=
               routingArray[currentNode][nextHop]) {
             // Only update backup next hop if it is different from the normal
@@ -213,7 +213,69 @@ implementation {
       }
     }
 
+    // Transfer tempRoutingArray into routingArray
+    // for (i = 0; i < neighborsArraySizeLimit; i++) {
+    //   if (tempRoutingArray[i][activate] != 1) {
+    //     continue;
+    //   }
+
+    //   if (tempRoutingArray[i][cost] <= routingArray[i][cost]) {
+
+    //     routingArray[i][backupCost] = routingArray[i][cost];
+    //     routingArray[i][backupHop] = routingArray[i][nextHop];
+
+    //     routingArray[i][cost] = tempRoutingArray[i][cost];
+    //     routingArray[i][nextHop] = tempRoutingArray[i][nextHop];
+
+    //   } else if (tempRoutingArray[i][cost] <= routingArray[i][backupCost]) {
+
+    //     routingArray[i][backupCost] = tempRoutingArray[i][cost];
+    //     routingArray[i][backupHop] = tempRoutingArray[i][nextHop];
+
+    //   } else if (tempRoutingArray[i][backupCost] <=
+    //              routingArray[i][backupCost]) {
+
+    //     routingArray[i][backupCost] = tempRoutingArray[i][backupCost];
+    //     routingArray[i][backupHop] = tempRoutingArray[i][backupHop];
+    //   }
+    // }
+  }
+
+  task void computeRoutingTable() {
+    // Store the indices for the structure of routingArray as variables
+    // This improves code readability
+    uint8_t activate = 0;
+    uint8_t nextHop = 1;
+    uint8_t cost = 2;
+    uint8_t backupHop = 3;
+    uint8_t backupCost = 4;
+
+    uint32_t maxCost = 10000;
+
+    uint32_t *immNeighbors =
+        (uint32_t *)(call NeighborDiscovery.getNeighbors());
+    uint32_t numNeighbors = call NeighborDiscovery.getNumNeighbors();
+
+    uint32_t i;
+
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      if (neighborsArray[i][0] == 1) {
+        routingArray[i][activate] = 1;
+        routingArray[i][cost] = maxCost;
+        routingArray[i][backupCost] = maxCost;
+      }
+    }
+
+    resetRoutingTable();
+    runDijkstra(immNeighbors, numNeighbors, -1);
+
     // Re-run Dijkstra to compute backup hops
+    // Disable one neighbor of this node, then rerun Dijkstra
+    for (i = 0; i < numNeighbors; i++) {
+      int disabledNeighbor = immNeighbors[i];
+      // runDijkstra(immNeighbors, numNeighbors, disabledNeighbor);
+    }
+
     /*
     Packet encapsulation and decapsulation -- MOST IMPORTANT PART TO LOOK OVER
 
@@ -227,33 +289,6 @@ implementation {
         routingArray[i][activate] = 0;
       }
     }
-    //   if (TOS_NODE_ID == 3) {
-    //     for (i = 0; i < neighborsArraySizeLimit; i++) {
-    //       int k;
-    //       dbg(GENERAL_CHANNEL, "Neighbors array for node %i.\n", i);
-    //       dbg(GENERAL_CHANNEL, "Active: %i\n", neighborsArray[i][0]);
-    //       dbg(GENERAL_CHANNEL, "Num neighbors: %i\n", neighborsArray[i][1]);
-
-    //       for (k = 0; k < neighborsArray[i][1]; k++) {
-    //         dbg(GENERAL_CHANNEL, "Neighbor: %i\n", neighborsArray[i][k * 2 +
-    //         2]); dbg(GENERAL_CHANNEL, "LQ: %i\n", neighborsArray[i][k * 2 +
-    //         3]);
-    //       }
-    //     }
-
-    //     for (i = 0; i < neighborsArraySizeLimit; i++) {
-    //       if (routingArray[i][activate] == 1) {
-    //         dbg(GENERAL_CHANNEL, "Routing for node %i.\n", i);
-    //         dbg(GENERAL_CHANNEL, "Active: %i\n", routingArray[i][activate]);
-    //         dbg(GENERAL_CHANNEL, "Next hop: %i\n", routingArray[i][nextHop]);
-    //         dbg(GENERAL_CHANNEL, "Next hop cost: %i\n",
-    //         routingArray[i][cost]); dbg(GENERAL_CHANNEL, "Backup hop: %i\n",
-    //         routingArray[i][backupHop]); dbg(GENERAL_CHANNEL, "Backup hop
-    //         cost: %i\n",
-    //             routingArray[i][backupCost]);
-    //       }
-    //     }
-    //   }
   }
 
   command int LinkState.getNextHop(int dest, bool backup) {
