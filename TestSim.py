@@ -128,7 +128,8 @@ class TestSim:
     def linkstateDMP(self, destination):
         self.sendCMD(self.CMD_LINKSTATE_DUMP, destination, "linkstate command");
 
-    def routeDMP(self, destination):
+    # Renamed from routeDMP to cmdRouteDMP because it says so in the document
+    def cmdRouteDMP(self, destination):
         self.sendCMD(self.CMD_ROUTE_DUMP, destination, "routing command");
 
     def addChannel(self, channelName, out=sys.stdout):
@@ -138,7 +139,7 @@ class TestSim:
 def main():
     s = TestSim();
     s.runTime(10);
-    s.loadTopo("example.topo");
+    s.loadTopo("ring.topo");
     s.loadNoise("no_noise.txt");
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
@@ -148,14 +149,19 @@ def main():
     # s.addChannel(s.NEIGHBOR_CHANNEL);
     # s.addChannel(s.FLOODING_CHANNEL);
 
+    # NeighborDiscovery currently has a timer of about 10s so routes won't be repaired until about 10s passes
     s.runTime(20);
-    s.ping(3, 9, "Hello, World");
-    s.runTime(10);
-    s.ping(8, 1, "Hi!");
-    s.runTime(20);
-    s.routeDMP(6);
+    s.cmdRouteDMP(5);
+    s.runTime(1);
+    s.ping(5, 1, "Before killing node 4.");
+    s.runTime(1);
+    s.moteOff(4);
+    s.runTime(15);
+    s.cmdRouteDMP(5);
+    s.runTime(1);
+    s.ping(5, 1, "After killing node 4.");
+    s.runTime(1);
     # s.linkstateDMP(3);
-    s.runTime(10);
 
 if __name__ == '__main__':
     main()

@@ -38,8 +38,8 @@ implementation {
   // [valid?, next hop, cost, backup next hop, backup cost]
   // [1, 2, 0.8, 5, 0.9]
 
-  event void Boot.booted() {
-    // Start the module
+  void resetRoutingTable() {
+    // Called whenever the table must be recomputed
     uint32_t i;
     for (i = 0; i < neighborsArraySizeLimit; i++) {
       uint32_t j;
@@ -49,6 +49,11 @@ implementation {
         routingArray[i][j] = -1;
       }
     }
+  }
+
+  event void Boot.booted() {
+    // Start the module
+    resetRoutingTable();
 
     call CacheReset.startPeriodic(200000);
 
@@ -88,6 +93,8 @@ implementation {
     uint32_t numNeighbors = call NeighborDiscovery.getNumNeighbors();
 
     uint32_t i;
+
+    resetRoutingTable();
 
     // Initializing the cost array, start with all nodes being "infinity"
     for (i = 0; i < neighborsArraySizeLimit; i++) {
@@ -206,6 +213,20 @@ implementation {
       }
     }
 
+    // Re-run Dijkstra to compute backup hops
+    /*
+    Packet encapsulation and decapsulation -- MOST IMPORTANT PART TO LOOK OVER
+
+    neighbor discovery: create new headers
+    Paul, Ryan
+    */
+
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      if (routingArray[i][activate] == 1 && routingArray[i][nextHop] == -1) {
+        // Deactivate dead nodes
+        routingArray[i][activate] = 0;
+      }
+    }
     //   if (TOS_NODE_ID == 3) {
     //     for (i = 0; i < neighborsArraySizeLimit; i++) {
     //       int k;
