@@ -47,17 +47,6 @@ implementation {
 
   // Commands and Functions
 
-  event void Boot.booted() {
-    // Randomly generates a number between to add to the base value.
-    // Basically the timer will range from 10000 to 10999 ms so there is a
-    // slight randomization but not too much.
-    uint32_t timeInMS = (call Random.rand16() % 1000) + 10000;
-
-    call beaconTimer.startPeriodic(timeInMS);
-
-    call CacheReset.startPeriodic(200000);
-  }
-
   void makePack(pack * Package, uint16_t src, uint16_t dest, uint16_t TTL,
                 uint16_t protocol, uint16_t seq, uint8_t * payload,
                 uint8_t length) {
@@ -67,6 +56,43 @@ implementation {
     Package->seq = seq;
     Package->protocol = protocol;
     memcpy(Package->payload, payload, length);
+  }
+
+  // Send the beacon packet to all neighbors
+  task void sendBeaconPacket() {
+    // (Note: remember that nesC vars need to be declared in the start)
+    pack beacon;
+    uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
+    uint32_t *neighborKeys = call BeaconResponses.getKeys();
+    uint16_t i;
+
+    sequenceNum++;
+
+    // Forgets data from the oldest beacon sent, assumes all beacons did not
+    // respond
+    for (i = 0; i < call BeaconResponses.size(); i++) {
+      uint32_t *replyArray =
+          (uint32_t *)(call BeaconResponses.get(neighborKeys[i]));
+      replyArray[sequenceNum % beaconsTracked] = 0;
+    }
+
+    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_BEACON,
+             sequenceNum, payload, sizeof(payload));
+
+    // Send the beacon
+    call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
+  }
+
+  event void Boot.booted() {
+    // Randomly generates a number between to add to the base value.
+    // Basically the timer will range from 10000 to 10999 ms so there is a
+    // slight randomization but not too much.
+    uint32_t timeInMS = (call Random.rand16() % 1000) + 10000;
+
+    post sendBeaconPacket();
+    call beaconTimer.startPeriodic(timeInMS);
+
+    call CacheReset.startPeriodic(200000);
   }
 
   task void areNeighborsWorthy() {
@@ -135,31 +161,6 @@ implementation {
     }
   }
 
-  // Send the beacon packet to all neighbors
-  task void sendBeaconPacket() {
-    // (Note: remember that nesC vars need to be declared in the start)
-    pack beacon;
-    uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
-    uint32_t *neighborKeys = call BeaconResponses.getKeys();
-    uint16_t i;
-
-    sequenceNum++;
-
-    // Forgets data from the oldest beacon sent, assumes all beacons did not
-    // respond
-    for (i = 0; i < call BeaconResponses.size(); i++) {
-      uint32_t *replyArray =
-          (uint32_t *)(call BeaconResponses.get(neighborKeys[i]));
-      replyArray[sequenceNum % beaconsTracked] = 0;
-    }
-
-    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_PING,
-             sequenceNum, payload, sizeof(payload));
-
-    // Send the beacon
-    call SimpleSend.send(beacon, AM_BROADCAST_ADDR);
-  }
-
   task void resetCache() {
     // Reset the soft state of both caches occasionally
     // Ensures that, if a node dies, it can still send messages later by
@@ -225,7 +226,7 @@ implementation {
     }
 
     if (validToSend) {
-      makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_PINGREPLY, seq,
+      makePack(&beaconResponse, TOS_NODE_ID, src, 1, PROTOCOL_BEACONREPLY, seq,
                response, sizeof(response));
 
       call SimpleSend.send(beaconResponse, src);

@@ -67,13 +67,13 @@ implementation {
       pack *myMsg = (pack *)payload;
       uint16_t prtcl = myMsg->protocol;
 
-      if (prtcl == PROTOCOL_PING) {
+      if (prtcl == PROTOCOL_BEACON) {
         call NeighborDiscovery.beaconSentReceived(myMsg);
-      } else if (prtcl == PROTOCOL_PINGREPLY) {
+      } else if (prtcl == PROTOCOL_BEACONREPLY) {
         call NeighborDiscovery.beaconResponseReceived(myMsg);
       } else if (prtcl == PROTOCOL_FLOODING || prtcl == PROTOCOL_LINKSTATE) {
         call Flooding.receiveMessage(myMsg);
-      } else if (prtcl == PROTOCOL_INTERNET) {
+      } else if (prtcl == PROTOCOL_PING || prtcl == PROTOCOL_PINGREPLY) {
         call InternetProtocol.receiveMessage(myMsg);
       } else {
         dbg(GENERAL_CHANNEL, "Package Payload: %s\n", myMsg->payload);
@@ -91,7 +91,7 @@ implementation {
              PACKET_MAX_PAYLOAD_SIZE);
     // call Sender.send(sendPackage, destination);
 
-    call InternetProtocol.sendMessage(destination, 10, payload,
+    call InternetProtocol.sendMessage(destination, 10, PROTOCOL_PING, payload,
                                       PACKET_MAX_PAYLOAD_SIZE);
   }
 

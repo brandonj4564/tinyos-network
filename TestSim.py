@@ -139,7 +139,7 @@ class TestSim:
 def main():
     s = TestSim();
     s.runTime(10);
-    s.loadTopo("example.topo");
+    s.loadTopo("ring.topo");
     s.loadNoise("no_noise.txt");
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
@@ -151,16 +151,20 @@ def main():
 
     # NeighborDiscovery currently has a timer of about 10s so routes won't be repaired until about 10s passes
     s.runTime(20);
-    s.cmdRouteDMP(5);
+    s.cmdRouteDMP(1);
     s.runTime(1);
-    s.ping(5, 1, "Before killing node 4.");
+    s.ping(1, 5, "B4 killing node 4.");
     s.runTime(1);
     s.moteOff(4);
+    s.runTime(1);
+    s.moteOff(6);
     s.runTime(15);
-    s.cmdRouteDMP(5);
+    s.cmdRouteDMP(1);
     s.runTime(1);
-    s.ping(5, 1, "After killing node 4.");
-    s.runTime(1);
+    s.ping(1, 5, "Killed node 4 and 6.");
+    s.runTime(5);
+    s.neighborDMP(5);
+
     # s.linkstateDMP(3);
 
 if __name__ == '__main__':

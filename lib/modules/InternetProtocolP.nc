@@ -37,6 +37,7 @@ implementation {
   }
 
   command void InternetProtocol.sendMessage(uint16_t dest, uint16_t TTL,
+                                            uint16_t protocol,
                                             uint8_t * payload, uint8_t length) {
     pack message;
     // Second argument is a boolean for backup hop
@@ -53,8 +54,8 @@ implementation {
       return;
     }
 
-    makePack(&message, TOS_NODE_ID, dest, TTL, PROTOCOL_INTERNET, sequenceNum,
-             payload, length);
+    makePack(&message, TOS_NODE_ID, dest, TTL, protocol, sequenceNum, payload,
+             length);
     sequenceNum++;
 
     dbg(GENERAL_CHANNEL, "IP: Forwarding message to %i.\n", nextHop);
@@ -83,10 +84,18 @@ implementation {
     }
 
     if (dest == TOS_NODE_ID) {
+      char *payload;
       // Message reached destination
       dbg(GENERAL_CHANNEL, "IP: FINALLY REACHED DESTINATION, SENT FROM %i\n",
           src);
       dbg(GENERAL_CHANNEL, "Payload: %s\n", (char *)msg->payload);
+
+      // Send a ping reply
+      if (msg->protocol == PROTOCOL_PING) {
+        payload = "Ping Reply received.";
+        call InternetProtocol.sendMessage(src, 10, PROTOCOL_PINGREPLY,
+                                          (uint8_t *)payload, 20);
+      }
       return;
     }
 
