@@ -26,6 +26,9 @@ implementation {
   // Wait until time has passed before allowing Dijkstra to run
   bool allowComputeRouting = 0;
 
+  // Placeholder infinity for Dijkstra
+  uint32_t maxCost = 10000;
+
   uint32_t neighborsArraySizeLimit = 30;
 
   uint32_t neighborsArray[30]
@@ -42,12 +45,11 @@ implementation {
     // Called whenever the table must be recomputed
     uint32_t i;
     for (i = 0; i < neighborsArraySizeLimit; i++) {
-      uint32_t j;
       routingArray[i][0] = 0;
-      for (j = 1; j < routingArraySizeLimit; j++) {
-        // initialization
-        routingArray[i][j] = -1;
-      }
+      routingArray[i][1] = -1;
+      routingArray[i][2] = maxCost;
+      routingArray[i][3] = -1;
+      routingArray[i][4] = maxCost;
     }
   }
 
@@ -81,9 +83,6 @@ implementation {
 
     uint32_t i;
 
-    // Placeholder infinity for Dijkstra
-    uint32_t maxCost = 10000;
-
     // Store the indices for the structure of routingArray as variables
     // This improves code readability
     uint8_t activate = 0;
@@ -94,20 +93,18 @@ implementation {
 
     // Initializing the cost array, start with all nodes being "infinity"
     for (i = 0; i < neighborsArraySizeLimit; i++) {
-      if (neighborsArray[i][0] == 1) {
-        routingArray[i][cost] = maxCost;
-        routingArray[i][backupCost] = maxCost;
-        // Creates copy so we can remove later
-        unconsidered[i] = 1;
-      } else {
-        unconsidered[i] = 0;
-      }
+      tempRoutingArray[i][activate] = neighborsArray[i][activate];
+      unconsidered[i] = neighborsArray[i][activate];
+      tempRoutingArray[i][nextHop] = -1;
+      tempRoutingArray[i][cost] = maxCost;
+      tempRoutingArray[i][backupHop] = -1;
+      tempRoutingArray[i][backupCost] = maxCost;
     }
 
-    routingArray[TOS_NODE_ID][nextHop] = TOS_NODE_ID;
-    routingArray[TOS_NODE_ID][cost] = 0;
-    routingArray[TOS_NODE_ID][backupHop] = TOS_NODE_ID;
-    routingArray[TOS_NODE_ID][backupCost] = 0;
+    tempRoutingArray[TOS_NODE_ID][nextHop] = TOS_NODE_ID;
+    tempRoutingArray[TOS_NODE_ID][cost] = 0;
+    tempRoutingArray[TOS_NODE_ID][backupHop] = TOS_NODE_ID;
+    tempRoutingArray[TOS_NODE_ID][backupCost] = 0;
 
     // This node's immediate neighbors have their cost overwritten
     for (i = 0; i < numNeighbors; i++) {
@@ -117,11 +114,11 @@ implementation {
         uint32_t startingCost = calcLinkToCost(
             call NeighborDiscovery.getNeighborLinkQuality(n) * 100);
         // dbg(GENERAL_CHANNEL, "cost: %i\n", startingCost);
-        routingArray[n][cost] = startingCost;
-        // routingArray[n][backupCost] = maxCost;
+        tempRoutingArray[n][cost] = startingCost;
+        // tempRoutingArray[n][backupCost] = maxCost;
 
         // Next hop
-        routingArray[n][nextHop] = n;
+        tempRoutingArray[n][nextHop] = n;
       }
       unconsidered[n] = 1;
     }
@@ -142,9 +139,9 @@ implementation {
       }
 
       for (i = 0; i < neighborsArraySizeLimit; i++) {
-        if (unconsidered[i] == 1 && routingArray[i][cost] <= lowValue) {
+        if (unconsidered[i] == 1 && tempRoutingArray[i][cost] <= lowValue) {
           currentLow = i;
-          lowValue = routingArray[i][cost];
+          lowValue = tempRoutingArray[i][cost];
         }
       }
 
@@ -154,21 +151,6 @@ implementation {
 
       lowestCostNumNeighbors = neighborsArray[currentLow][1];
 
-      if (lowestCostNumNeighbors == 1 &&
-          neighborsArray[currentLow][3] < maxCost) {
-        // Only one neighbor means only one path to get to that node
-        // This breaks my backup hop algorithm so I need a special case
-        // I simply copy the backup hop of the sole neighbor
-        int soleNeighbor = neighborsArray[currentLow][2];
-        int soleNeighborLink = neighborsArray[currentLow][3];
-        routingArray[currentLow][backupHop] =
-            routingArray[soleNeighbor][backupHop];
-
-        routingArray[currentLow][backupCost] =
-            routingArray[soleNeighbor][backupCost] +
-            calcLinkToCost(soleNeighborLink);
-      }
-
       for (j = 1; j < lowestCostNumNeighbors + 1; j++) {
         // Remember: Structure of the neighborsArray
         // [active?, numNeighbors, neighbor1, LQ1, neighbor2, LQ2...]
@@ -176,69 +158,59 @@ implementation {
         uint32_t currentNode = neighborsArray[currentLow][j * 2];
         // adds cost of current low node to the ones of the neighbor nodes
         // to get the cost from currentNode(TOS_NOde...).
-        int tempCost = routingArray[currentLow][cost] +
+        int tempCost = tempRoutingArray[currentLow][cost] +
                        calcLinkToCost(neighborsArray[currentLow][j * 2 + 1]);
 
-        routingArray[currentLow][activate] = 1;
+        tempRoutingArray[currentLow][activate] = 1;
 
-        if (tempCost < routingArray[currentNode][cost]) {
+        if (tempCost < tempRoutingArray[currentNode][cost]) {
 
           // store the next hop from currentNode, working backwords
-          if (routingArray[currentLow][nextHop] !=
-              routingArray[currentNode][nextHop]) {
-
-            routingArray[currentNode][backupCost] =
-                routingArray[currentNode][cost];
-
-            // Swap the backup next hop with the current next hop
-            routingArray[currentNode][backupHop] =
-                routingArray[currentNode][nextHop];
-          }
-
-          routingArray[currentNode][nextHop] =
-              routingArray[currentLow][nextHop];
-          routingArray[currentNode][cost] = tempCost;
-        } else if (tempCost < routingArray[currentNode][backupCost]) {
-          // TODO: Make backup next hop actually work
-
-          if (routingArray[currentLow][nextHop] !=
-              routingArray[currentNode][nextHop]) {
-            // Only update backup next hop if it is different from the normal
-            // next hop
-            routingArray[currentNode][backupCost] = tempCost;
-            routingArray[currentNode][backupHop] =
-                routingArray[currentLow][nextHop];
-          }
+          tempRoutingArray[currentNode][nextHop] =
+              tempRoutingArray[currentLow][nextHop];
+          tempRoutingArray[currentNode][cost] = tempCost;
         }
       }
     }
 
     // Transfer tempRoutingArray into routingArray
-    // for (i = 0; i < neighborsArraySizeLimit; i++) {
-    //   if (tempRoutingArray[i][activate] != 1) {
-    //     continue;
-    //   }
+    for (i = 0; i < neighborsArraySizeLimit; i++) {
+      int tempCost = tempRoutingArray[i][cost];
+      int tempBackupCost = tempRoutingArray[i][backupCost];
+      int tempNextHop = tempRoutingArray[i][nextHop];
+      int tempBackupHop = tempRoutingArray[i][backupHop];
 
-    //   if (tempRoutingArray[i][cost] <= routingArray[i][cost]) {
+      if (tempRoutingArray[i][activate] != 1) {
+        continue;
+      }
 
-    //     routingArray[i][backupCost] = routingArray[i][cost];
-    //     routingArray[i][backupHop] = routingArray[i][nextHop];
+      if (tempCost <= routingArray[i][cost]) {
 
-    //     routingArray[i][cost] = tempRoutingArray[i][cost];
-    //     routingArray[i][nextHop] = tempRoutingArray[i][nextHop];
+        if (routingArray[i][nextHop] != tempNextHop) {
+          routingArray[i][backupCost] = routingArray[i][cost];
+          routingArray[i][backupHop] = routingArray[i][nextHop];
+        }
 
-    //   } else if (tempRoutingArray[i][cost] <= routingArray[i][backupCost]) {
+        routingArray[i][cost] = tempCost;
+        routingArray[i][nextHop] = tempNextHop;
+        routingArray[i][activate] = 1;
 
-    //     routingArray[i][backupCost] = tempRoutingArray[i][cost];
-    //     routingArray[i][backupHop] = tempRoutingArray[i][nextHop];
+      } else if (tempCost <= routingArray[i][backupCost] &&
+                 routingArray[i][nextHop] != tempNextHop) {
+        // Basically only update backup hop if it is different than next hop
+        routingArray[i][backupCost] = tempCost;
+        routingArray[i][backupHop] = tempNextHop;
+        routingArray[i][activate] = 1;
+      }
 
-    //   } else if (tempRoutingArray[i][backupCost] <=
-    //              routingArray[i][backupCost]) {
+      if (tempBackupCost <= routingArray[i][backupCost] &&
+          tempBackupHop != routingArray[i][nextHop]) {
 
-    //     routingArray[i][backupCost] = tempRoutingArray[i][backupCost];
-    //     routingArray[i][backupHop] = tempRoutingArray[i][backupHop];
-    //   }
-    // }
+        routingArray[i][backupCost] = tempBackupCost;
+        routingArray[i][backupHop] = tempBackupHop;
+        routingArray[i][activate] = 1;
+      }
+    }
   }
 
   task void computeRoutingTable() {
@@ -246,25 +218,15 @@ implementation {
     // This improves code readability
     uint8_t activate = 0;
     uint8_t nextHop = 1;
-    uint8_t cost = 2;
-    uint8_t backupHop = 3;
-    uint8_t backupCost = 4;
-
-    uint32_t maxCost = 10000;
+    // uint8_t cost = 2;
+    // uint8_t backupHop = 3;
+    // uint8_t backupCost = 4;
 
     uint32_t *immNeighbors =
         (uint32_t *)(call NeighborDiscovery.getNeighbors());
     uint32_t numNeighbors = call NeighborDiscovery.getNumNeighbors();
 
     uint32_t i;
-
-    for (i = 0; i < neighborsArraySizeLimit; i++) {
-      if (neighborsArray[i][0] == 1) {
-        routingArray[i][activate] = 1;
-        routingArray[i][cost] = maxCost;
-        routingArray[i][backupCost] = maxCost;
-      }
-    }
 
     resetRoutingTable();
     runDijkstra(immNeighbors, numNeighbors, -1);
@@ -273,7 +235,7 @@ implementation {
     // Disable one neighbor of this node, then rerun Dijkstra
     for (i = 0; i < numNeighbors; i++) {
       int disabledNeighbor = immNeighbors[i];
-      // runDijkstra(immNeighbors, numNeighbors, disabledNeighbor);
+      runDijkstra(immNeighbors, numNeighbors, disabledNeighbor);
     }
 
     /*

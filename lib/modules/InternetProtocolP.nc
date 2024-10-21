@@ -1,8 +1,12 @@
 module InternetProtocolP {
   provides interface InternetProtocol;
 
+  uses interface Boot;
+
   uses interface SimpleSend;
   uses interface LinkState;
+  uses interface Timer<TMilli> as CacheReset;
+  uses interface Hashmap<uint16_t> as Cache;
 }
 
 implementation {
@@ -17,6 +21,19 @@ implementation {
     Package->seq = seq;
     Package->protocol = protocol;
     memcpy(Package->payload, payload, length);
+  }
+
+  event void Boot.booted() { call CacheReset.startPeriodic(200000); }
+
+  event void CacheReset.fired() {
+    uint32_t *tableKeys = (uint32_t *)(call Cache.getKeys());
+    uint16_t tableSize = call Cache.size();
+    uint16_t i;
+
+    for (i = 0; i < tableSize; i++) {
+      uint32_t key = tableKeys[i];
+      call Cache.remove(key);
+    }
   }
 
   command void InternetProtocol.sendMessage(uint16_t dest, uint16_t TTL,
@@ -51,6 +68,19 @@ implementation {
     int nextHop;
     uint16_t dest = msg->dest;
     uint16_t src = msg->src;
+    uint16_t seq = msg->seq;
+
+    // Compare seq to cached seq
+    if (call Cache.contains(src)) {
+      if (seq <= call Cache.get(src)) {
+        return;
+      } else {
+        call Cache.remove(src);
+        call Cache.insert(src, seq);
+      }
+    } else {
+      call Cache.insert(src, seq);
+    }
 
     if (dest == TOS_NODE_ID) {
       // Message reached destination
