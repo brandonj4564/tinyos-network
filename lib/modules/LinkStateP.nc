@@ -23,6 +23,18 @@ implementation {
   every change. The command should be: def cmdRouteDMP(destination)
   */
 
+  // LSA pack struct
+  // Only made this because the high level design slides said to
+  typedef nx_struct packLSA {
+    nx_uint16_t src;
+    nx_uint16_t seq; // Sequence Number
+    nx_uint8_t numNeighbors;
+    nx_uint8_t payload[0];
+  }
+  packLSA;
+
+  uint32_t sequenceNum = 0;
+
   // Wait until time has passed before allowing Dijkstra to run
   bool allowComputeRouting = 0;
 
@@ -365,10 +377,11 @@ implementation {
   command void LinkState.receiveLSA(pack * msg) {
     // recieve neighbor list from other nodes
     // Add neighbor list to networkTopo configuring it to it's sender node
-    uint16_t sizeLSA = msg->payload[0] * 2 + 1;
-    uint8_t *payload = (uint8_t *)(msg->payload);
-    uint16_t src = msg->src;
-    uint16_t seq = msg->seq;
+    packLSA *lsa = (packLSA *)msg->payload;
+    uint16_t sizeLSA = lsa->numNeighbors * 2;
+    uint8_t *payload = (uint8_t *)(lsa->payload);
+    uint16_t src = lsa->src;
+    uint16_t seq = lsa->seq;
 
     uint16_t i;
 
@@ -385,6 +398,7 @@ implementation {
     }
 
     // dbg(GENERAL_CHANNEL, "LSA from %i\n", src);
+    // dbg(GENERAL_CHANNEL, "LSA payload length: %i\n", sizeLSA);
     // for (i = 0; i < sizeLSA; i++) {
     //   dbg(GENERAL_CHANNEL, "Contents of Payload: %i\n", payload[i]);
     // }
@@ -393,13 +407,14 @@ implementation {
       dbg(GENERAL_CHANNEL,
           "Cannot store node %i's neighbor list! Increase "
           "neighborsArraySizeLimit!\n",
-          msg->src);
+          lsa->src);
       return;
     }
 
     neighborsArray[src][0] = 1; // This node's neighbors are tracked
+    neighborsArray[src][1] = lsa->numNeighbors;
     for (i = 0; i < sizeLSA; i++) {
-      neighborsArray[src][i + 1] = payload[i];
+      neighborsArray[src][i + 2] = payload[i];
     }
 
     if (allowComputeRouting) {
@@ -407,42 +422,63 @@ implementation {
     }
   }
 
+  void makeLSA(packLSA * Package, uint16_t src, uint16_t seq, uint8_t * payload,
+               uint8_t length) {
+    Package->src = src;
+    Package->seq = seq;
+    Package->numNeighbors = length / 2;
+    memcpy(Package->payload, payload, length);
+  }
+
   command void LinkState.sendLSA() {
-    // Having dest = AM_BROADCAST_ADDR means the message never reaches a
-    // destination and ends so it floods the network
+    // Taken directly from packet.h
+    // uint8_t PACKET_HEADER_LENGTH = 8;
+    // uint8_t PACKET_MAX_PAYLOAD_SIZE = 28 - PACKET_HEADER_LENGTH;
+    packLSA lsa;
+
+    // Having dest = AM_BROADCAST_ADDR means the message never
+    // reaches a destination and ends so it floods the network
     uint16_t dest = AM_BROADCAST_ADDR;
-    uint16_t TTL = 20;
+    uint16_t TTL = 10;
     uint16_t protocol = PROTOCOL_LINKSTATE;
     uint32_t *neighbors = (uint32_t *)(call NeighborDiscovery.getNeighbors());
-    uint8_t length = call NeighborDiscovery.getNumNeighbors();
+    uint8_t length = 2 * call NeighborDiscovery.getNumNeighbors();
 
-    // Payload structure: first item is the number of neighbors
-    // Then it alternates between neighbor id and link quality (LQ) to reach
-    // that neighbor Ex: payload = [2, 1, 50, 3, 90] 2 neighbors, node 1 with
-    // LQ 0.5 * 100 and 3 with LQ 0.9 * 100
-    uint8_t payload[length * 2 + 1];
+    // Payload structure: [neighbor1, LQ1, neighbor2, LQ2...]
+    uint8_t lsaSize = sizeof(packLSA) + (length * sizeof(uint8_t));
+    uint8_t lsaPayload[length];
+    uint8_t normalPayload[PACKET_MAX_PAYLOAD_SIZE];
     uint16_t i;
     uint16_t currentNeighbor = 0;
 
-    // The message structure sends the length of the neighbor list as the first
-    // element, then the neighbor list right after
-    payload[0] = length;
-    for (i = 1; i < length * 2 + 1; i++) {
-      if (i % 2 == 1) {
+    // Ensure the total size of packLSA fits in the payload of pack
+    if (lsaSize > PACKET_MAX_PAYLOAD_SIZE) {
+      dbg(GENERAL_CHANNEL, "Error: LSA is too large to fit in payload!\n");
+      return;
+    }
+
+    for (i = 0; i < length; i++) {
+      if (i % 2 == 0) {
         // Insert neighbor
-        payload[i] = neighbors[currentNeighbor];
+        lsaPayload[i] = neighbors[currentNeighbor];
       } else {
         // Insert cost
         // "Cost" is the quality of the link, prioritize better links
         // Payload accepts ints not floats, multiply by 100
-        payload[i] = (call NeighborDiscovery.getNeighborLinkQuality(
-                         neighbors[currentNeighbor])) *
-                     100;
+        lsaPayload[i] = (call NeighborDiscovery.getNeighborLinkQuality(
+                            neighbors[currentNeighbor])) *
+                        100;
 
         currentNeighbor++;
       }
     }
 
-    call Flooding.sendMessage(dest, TTL, protocol, payload, length * 2 + 1);
+    makeLSA(&lsa, TOS_NODE_ID, sequenceNum, lsaPayload, length);
+    sequenceNum++;
+
+    // Copy the entire packLSA into the payload of pack
+    memcpy(normalPayload, (void *)(&lsa), lsaSize);
+
+    call Flooding.sendMessage(dest, TTL, protocol, normalPayload, lsaSize);
   }
 }
