@@ -14,15 +14,6 @@ module LinkStateP {
 }
 
 implementation {
-  /*
-  IMPORTANT!!!
-  To demonstrate your solution, you should be able to call a function in your
-  Python run script to print out all of the link state advertisements you used
-  to compute the routing table, and to print the contents of the routing table.
-  You may find this more convenient than logging the entire routing table after
-  every change. The command should be: def cmdRouteDMP(destination)
-  */
-
   // LSA pack struct
   // Only made this because the high level design slides said to
   typedef nx_struct packLSA {
@@ -255,6 +246,11 @@ implementation {
 
     neighbor discovery: create new headers
     Paul, Ryan
+    Ask:
+    How do you pass the payload from InternetProtocol to the Ping application?
+    Am I doing the packet encapsulation and header stuff correct?
+    Are there any strict rules regarding the PROTOCOLs in protocol.h or am I
+    free to define them as I require?
     */
 
     for (i = 0; i < neighborsArraySizeLimit; i++) {
@@ -452,7 +448,12 @@ implementation {
     uint16_t currentNeighbor = 0;
 
     // Ensure the total size of packLSA fits in the payload of pack
+    // Max packet size for us is 20 bytes, subtract our overhead (5 bytes) and
+    // we get 15 bytes.
+    // We only have 15 bytes for our payload, which is 15 spots. This means we
+    // can send a max of SEVEN neighbor-LQ tuples per packet.
     if (lsaSize > PACKET_MAX_PAYLOAD_SIZE) {
+      // TODO: Fragment the packet, so that you can send more than 7 neighbors
       dbg(GENERAL_CHANNEL, "Error: LSA is too large to fit in payload!\n");
       return;
     }
