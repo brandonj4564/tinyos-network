@@ -15,10 +15,9 @@ module LinkStateP {
 
 implementation {
   // LSA pack struct
-  // Only made this because the high level design slides said to
   typedef nx_struct packLSA {
-    nx_uint16_t src;
-    nx_uint16_t seq; // Sequence Number
+    nx_uint8_t src;
+    nx_uint8_t seq; // Sequence Number
     nx_uint8_t numNeighbors;
     nx_uint8_t payload[0];
   }
@@ -241,18 +240,6 @@ implementation {
       runDijkstra(immNeighbors, numNeighbors, disabledNeighbor);
     }
 
-    /*
-    Packet encapsulation and decapsulation -- MOST IMPORTANT PART TO LOOK OVER
-
-    neighbor discovery: create new headers
-    Paul, Ryan
-    Ask:
-    How do you pass the payload from InternetProtocol to the Ping application?
-    Am I doing the packet encapsulation and header stuff correct?
-    Are there any strict rules regarding the PROTOCOLs in protocol.h or am I
-    free to define them as I require?
-    */
-
     for (i = 0; i < neighborsArraySizeLimit; i++) {
       if (routingArray[i][activate] == 1 && routingArray[i][nextHop] == -1) {
         // Deactivate dead nodes
@@ -427,9 +414,6 @@ implementation {
   }
 
   command void LinkState.sendLSA() {
-    // Taken directly from packet.h
-    // uint8_t PACKET_HEADER_LENGTH = 8;
-    // uint8_t PACKET_MAX_PAYLOAD_SIZE = 28 - PACKET_HEADER_LENGTH;
     packLSA lsa;
 
     // Having dest = AM_BROADCAST_ADDR means the message never
@@ -454,6 +438,7 @@ implementation {
     // can send a max of SEVEN neighbor-LQ tuples per packet.
     if (lsaSize > PACKET_MAX_PAYLOAD_SIZE) {
       // TODO: Fragment the packet, so that you can send more than 7 neighbors
+      // Also, change the normal pack header to have less redundancy
       dbg(GENERAL_CHANNEL, "Error: LSA is too large to fit in payload!\n");
       return;
     }
