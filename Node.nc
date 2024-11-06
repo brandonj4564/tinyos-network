@@ -30,6 +30,9 @@ module Node {
   // Project 2
   uses interface LinkState;
   uses interface InternetProtocol;
+
+  // Project 3
+  uses interface Transport;
 }
 
 implementation {

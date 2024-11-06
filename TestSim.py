@@ -144,6 +144,7 @@ def main():
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
+    s.runTime(10);
 
     # Project 1
     # s.addChannel(s.NEIGHBOR_CHANNEL);
@@ -151,43 +152,6 @@ def main():
 
     # NeighborDiscovery currently has a timer of about 10s so routes won't be repaired until about 10s passes
 
-    # Test 1: Normal Routing, no nodes killed (use example.topo)
-    s.runTime(20);
-    s.cmdRouteDMP(3); # Get routing table for node 3
-    s.runTime(1);
-    s.ping(3, 8, "Pinged!"); # Node 3 pings node 8
-    s.runTime(1);
-    s.linkstateDMP(3); # Prints out all the LSAs received from other nodes, basically just neighbor lists
-    s.runTime(1);
-
-    # Test 2: Normal Routing, one node killed (use ring.topo)
-    # s.runTime(20);
-    # s.cmdRouteDMP(3); # Get routing table for node 3
-    # s.runTime(1);
-    # s.ping(3, 5, "Pinged!"); # Node 3 pings node 5
-    # s.runTime(1);
-    # s.moteOff(4); # Kill node 4, which is in between 3 and 5
-    # s.runTime(15); # Allow time for routing tables to recover
-    # s.cmdRouteDMP(3); # Re-print node 3 routing table to see changes after 4 is killed
-    # s.runTime(1);
-    # s.ping(3, 5, "New ping!"); # Node 3 pings node 5
-    # s.runTime(1);
-
-    # Test 3: One node becomes unreachable (use ring.topo)
-    # s.runTime(20);
-    # s.cmdRouteDMP(3); # Get routing table for node 3
-    # s.runTime(1);
-    # s.neighborDMP(5); # Get 5's neighbors
-    # s.runTime(1);
-    # s.moteOff(4); # Kill node 4, which is one of 5's neighbors
-    # s.runTime(1);
-    # s.moteOff(6); # Kill node 6, which is 5's other neighbor
-    # # Node 5 is now completely unreachable
-    # s.runTime(15); # Allow time for routing tables to recover
-    # s.cmdRouteDMP(3); # Re-print node 3 routing table to see changes
-    # s.runTime(1);
-    # s.ping(3, 5, "Pinged!"); # Node 3 pings node 5
-    # s.runTime(1);
 
 if __name__ == '__main__':
     main()

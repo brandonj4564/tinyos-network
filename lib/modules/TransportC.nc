@@ -5,6 +5,5 @@ implementation {
   Transport = TransportP.Transport;
 
   components MainC;
-  LinkStateP->MainC.Boot;
-
+  TransportP->MainC.Boot;
 }

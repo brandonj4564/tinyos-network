@@ -1,8 +1,8 @@
+#include "../../includes/packet.h"
 #include "../../includes/socket.h"
-#include "../../packet.h"
 
-module TransportP { 
-  provides interface Transport; 
+module TransportP {
+  provides interface Transport;
 
   uses interface Boot;
 }
@@ -11,7 +11,7 @@ implementation {
   typedef nx_struct structTCP {
     nx_uint8_t src;
     nx_uint8_t dest;
-    nx_uint8_t seq; 
+    nx_uint8_t seq;
     nx_uint8_t ack;
     nx_uint8_t flag;
     nx_uint8_t adWindow;
@@ -19,19 +19,30 @@ implementation {
   }
   structTCP;
 
-  socket_store_t socketList[MAX_NUM_OF_SOCKETS]; 
+  socket_store_t socketList[MAX_NUM_OF_SOCKETS];
   // currentSocket is used to index socketList
   uint8_t currentSocket = 0;
 
+  void test() {
+    socket_t fd;
+    socket_t fdTwo;
+
+    fd = call Transport.socket();
+    fdTwo = call Transport.socket();
+    dbg(GENERAL_CHANNEL, "This socket is %u\n", (uint8_t)fd);
+    dbg(GENERAL_CHANNEL, "This other socket is %u\n", (uint8_t)fdTwo);
+  }
+
   event void Boot.booted() {
     uint8_t i;
-    for(i = 0; i < MAX_NUM_OF_SOCKETS; i++){
+    dbg(GENERAL_CHANNEL, "hi\n");
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       // Initialize all sockets as being free and with default values
-      socketList[i].state = CLOSED;   
-      socketList[i].flag = 0;             
-      socketList[i].src = 0;             
-      socketList[i].dest.port = 0;        
-      socketList[i].dest.addr = 0;        
+      socketList[i].state = CLOSED;
+      socketList[i].flag = 0;
+      socketList[i].src = 0;
+      socketList[i].dest.port = 0;
+      socketList[i].dest.addr = 0;
 
       // Initialize buffer pointers and counters
       socketList[i].lastWritten = 0;
@@ -44,13 +55,13 @@ implementation {
       // Set RTT and window values to 0 or default
       socketList[i].RTT = 0;
       socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE;
-      
+
       // Optionally initialize buffers to zero
       memset(socketList[i].sendBuff, 0, SOCKET_BUFFER_SIZE);
       memset(socketList[i].rcvdBuff, 0, SOCKET_BUFFER_SIZE);
-      
-      socketList[i] = 0;
     }
+
+    test();
   }
 
   /**
@@ -61,16 +72,15 @@ implementation {
    *    associated with a socket. If you are unable to allocated
    *    a socket then return a NULL socket_t.
    */
-  command socket_t TransportP.socket() {
+  command socket_t Transport.socket() {
     // Have a list of available sockets and return one of them i guess
     socket_t sock;
     uint8_t counter = 0; // Prevent infinite loops if no sockets are available
 
-    while(){
-      // TODO: Change this
-      if(socketList[currentSocket % MAX_NUM_OF_SOCKETS] == 0){
+    while (1) {
+      if (socketList[currentSocket % MAX_NUM_OF_SOCKETS].state == CLOSED) {
         // socket_t is just a reskinned uint8_t anyways so it's fine to typecast
-        sock = (socket_t) (currentSocket % MAX_NUM_OF_SOCKETS);
+        sock = (socket_t)(currentSocket % MAX_NUM_OF_SOCKETS);
         currentSocket++;
         return sock;
       }
@@ -78,9 +88,10 @@ implementation {
       currentSocket++;
       counter++;
 
-      if(counter > MAX_NUM_OF_SOCKETS){
+      if (counter > MAX_NUM_OF_SOCKETS) {
         // No available sockets, looped around too many times
-        return NULL;
+        sock = (socket_t)NULL;
+        return sock;
       }
     }
   }
@@ -97,16 +108,23 @@ implementation {
    * @return error_t - SUCCESS if you were able to bind this socket, FAIL
    *       if you were unable to bind.
    */
-  command error_t TransportP.bind(socket_t fd, socket_addr_t * addr) {
-    // Perhaps this could be as simple as setting addr->port = fd?
+  command error_t Transport.bind(socket_t fd, socket_addr_t * addr) {
     // error_t: 0 = success, 1 = failure
-    
-    // Is the address the node we are setting up a connection too? or the node we are in
-    //       If its node we are connecting too we could have an array to store it 
-    //          0    1    2 ...... fd/sockets
-    //         addr addr addr ...... address we are connecting too 
-    error_t result = 0;
-    return result;
+    if (fd >= MAX_NUM_OF_SOCKETS) {
+      return FAIL; // Return an error if the fd is out of range
+    }
+
+    // Check if the socket is currently closed before binding
+    if (socketList[fd].state != CLOSED) {
+      return FAIL; // Cannot bind if the socket is not in CLOSED state
+    }
+
+    // Set state to Listen to prevent other sockets from binding
+    socketList[fd].state = LISTEN;
+    socketList[fd].src = TOS_NODE_ID;
+    socketList[fd].dest = *addr;
+
+    return SUCCESS;
   }
 
   /**
@@ -121,9 +139,10 @@ implementation {
    *    a destination associated with the destination address and port.
    *    if not return a null socket.
    */
-  command socket_t TransportP.accept(socket_t fd) {
-    // There is a queue of incoming connections. This command should accept the first connection
-    // in the queue, create a new connected socket, and return the file descriptor for that socket.
+  command socket_t Transport.accept(socket_t fd) {
+    // There is a queue of incoming connections. This command should accept the
+    // first connection in the queue, create a new connected socket, and return
+    // the file descriptor for that socket.
   }
 
   /**
@@ -141,8 +160,8 @@ implementation {
    * @return uint16_t - return the amount of data you are able to write
    *    from the pass buffer. This may be shorter then bufflen
    */
-  command uint16_t TransportP.write(socket_t fd, uint8_t * buff,
-                                    uint16_t bufflen) {}
+  command uint16_t Transport.write(socket_t fd, uint8_t * buff,
+                                   uint16_t bufflen) {}
 
   /**
    * This will pass the packet so you can handle it internally.
@@ -152,7 +171,7 @@ implementation {
    * @return uint16_t - return SUCCESS if you are able to handle this
    *    packet or FAIL if there are errors.
    */
-  command error_t TransportP.receive(pack * package) {}
+  command error_t Transport.receive(pack * package) {}
 
   /**
    * Read from the socket and write this data to the buffer. This data
@@ -169,8 +188,8 @@ implementation {
    * @return uint16_t - return the amount of data you are able to read
    *    from the pass buffer. This may be shorter then bufflen
    */
-  command uint16_t TransportP.read(socket_t fd, uint8_t * buff,
-                                   uint16_t bufflen) {}
+  command uint16_t Transport.read(socket_t fd, uint8_t * buff,
+                                  uint16_t bufflen) {}
 
   /**
    * Attempts a connection to an address.
@@ -184,7 +203,7 @@ implementation {
    * @return socket_t - returns SUCCESS if you are able to attempt
    *    a connection with the fd passed, else return FAIL.
    */
-  command error_t TransportP.connect(socket_t fd, socket_addr_t * addr) {}
+  command error_t Transport.connect(socket_t fd, socket_addr_t * addr) {}
 
   /**
    * Closes the socket.
@@ -195,7 +214,7 @@ implementation {
    * @return socket_t - returns SUCCESS if you are able to attempt
    *    a closure with the fd passed, else return FAIL.
    */
-  command error_t TransportP.close(socket_t fd) {}
+  command error_t Transport.close(socket_t fd) {}
 
   /**
    * A hard close, which is not graceful. This portion is optional.
@@ -206,7 +225,7 @@ implementation {
    * @return socket_t - returns SUCCESS if you are able to attempt
    *    a closure with the fd passed, else return FAIL.
    */
-  command error_t TransportP.release(socket_t fd) {}
+  command error_t Transport.release(socket_t fd) {}
 
   /**
    * Listen to the socket and wait for a connection.
@@ -217,5 +236,5 @@ implementation {
    * @return error_t - returns SUCCESS if you are able change the state
    *   to listen else FAIL.
    */
-  command error_t TransportP.listen(socket_t fd) {}
+  command error_t Transport.listen(socket_t fd) {}
 }

@@ -77,8 +77,8 @@ implementation {
       replyArray[sequenceNum % beaconsTracked] = 0;
     }
 
-    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, TTL, PROTOCOL_BEACON,
-             sequenceNum, payload, sizeof(payload));
+    makePack(&beacon, TOS_NODE_ID, (uint8_t)AM_BROADCAST_ADDR, TTL,
+             PROTOCOL_BEACON, sequenceNum, payload, sizeof(payload));
 
     // Send the beacon
     call SimpleSend.send(beacon, AM_BROADCAST_ADDR);

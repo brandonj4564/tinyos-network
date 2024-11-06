@@ -43,4 +43,7 @@ implementation {
 
   components InternetProtocolC;
   Node.InternetProtocol->InternetProtocolC;
+
+  components TransportC;
+  Node.Transport->TransportC;
 }
