@@ -1,20 +1,3 @@
-
-/*
-TODO:
-1. Create a sequence variable here that starts at 0 and increments every time a
-new packet is sent
-2. Add a node table (probably with the hashmap structure) that tracks the
-highest sequence packet received from each node
-3. Create the floodSend() function that broadcasts to every node. This should be
-a generic function that takes in a Destination and Payload argument.
-4. Create a floodReceive() function that is called when a node receives a packet
-with the flooding protocol. It will decrement the TTL and forward the packet if
-it is not the destination.
-5. Each node checks if the packet has a higher sequence number using the node
-table. We are not using neighbor discovery in flooding, probably. If the packet
-has an equal or lower sequence, drop it.
-*/
-
 module FloodingP {
   provides interface Flooding;
   uses interface Hashmap<uint16_t> as NodeTable;

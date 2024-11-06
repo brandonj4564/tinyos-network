@@ -36,7 +36,7 @@ implementation {
   // The sequence number doubles as a way to keep track of which array we are
   // currently using to track which nodes have responded to our beacon. This is
   // done by calculating sequenceNum % 5.
-  uint16_t sequenceNum = 0;
+  uint8_t sequenceNum = 0;
 
   // Stores arrays for 10 potential neighbors, increase storage if necessary
   // Should match the storage allocated to the BeaconResponses hashmap
@@ -65,6 +65,7 @@ implementation {
     uint8_t payload[1] = {0}; // Beacon packets don't really need a payload
     uint32_t *neighborKeys = call BeaconResponses.getKeys();
     uint16_t i;
+    uint8_t TTL = 1;
 
     sequenceNum++;
 
@@ -76,7 +77,7 @@ implementation {
       replyArray[sequenceNum % beaconsTracked] = 0;
     }
 
-    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, 1, PROTOCOL_BEACON,
+    makePack(&beacon, TOS_NODE_ID, AM_BROADCAST_ADDR, TTL, PROTOCOL_BEACON,
              sequenceNum, payload, sizeof(payload));
 
     // Send the beacon
