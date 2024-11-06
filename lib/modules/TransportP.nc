@@ -1,9 +1,58 @@
 #include "../../includes/socket.h"
 #include "../../packet.h"
 
-module TransportP { provides interface Transport; }
+module TransportP { 
+  provides interface Transport; 
+
+  uses interface Boot;
+}
 
 implementation {
+  typedef nx_struct structTCP {
+    nx_uint8_t src;
+    nx_uint8_t dest;
+    nx_uint8_t seq; 
+    nx_uint8_t ack;
+    nx_uint8_t flag;
+    nx_uint8_t adWindow;
+    nx_uint8_t payload[0];
+  }
+  structTCP;
+
+  socket_store_t socketList[MAX_NUM_OF_SOCKETS]; 
+  // currentSocket is used to index socketList
+  uint8_t currentSocket = 0;
+
+  event void Boot.booted() {
+    uint8_t i;
+    for(i = 0; i < MAX_NUM_OF_SOCKETS; i++){
+      // Initialize all sockets as being free and with default values
+      socketList[i].state = CLOSED;   
+      socketList[i].flag = 0;             
+      socketList[i].src = 0;             
+      socketList[i].dest.port = 0;        
+      socketList[i].dest.addr = 0;        
+
+      // Initialize buffer pointers and counters
+      socketList[i].lastWritten = 0;
+      socketList[i].lastAck = 0;
+      socketList[i].lastSent = 0;
+      socketList[i].lastRead = 0;
+      socketList[i].lastRcvd = 0;
+      socketList[i].nextExpected = 0;
+
+      // Set RTT and window values to 0 or default
+      socketList[i].RTT = 0;
+      socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE;
+      
+      // Optionally initialize buffers to zero
+      memset(socketList[i].sendBuff, 0, SOCKET_BUFFER_SIZE);
+      memset(socketList[i].rcvdBuff, 0, SOCKET_BUFFER_SIZE);
+      
+      socketList[i] = 0;
+    }
+  }
+
   /**
    * Get a socket if there is one available.
    * @Side Client/Server
@@ -14,6 +63,26 @@ implementation {
    */
   command socket_t TransportP.socket() {
     // Have a list of available sockets and return one of them i guess
+    socket_t sock;
+    uint8_t counter = 0; // Prevent infinite loops if no sockets are available
+
+    while(){
+      // TODO: Change this
+      if(socketList[currentSocket % MAX_NUM_OF_SOCKETS] == 0){
+        // socket_t is just a reskinned uint8_t anyways so it's fine to typecast
+        sock = (socket_t) (currentSocket % MAX_NUM_OF_SOCKETS);
+        currentSocket++;
+        return sock;
+      }
+
+      currentSocket++;
+      counter++;
+
+      if(counter > MAX_NUM_OF_SOCKETS){
+        // No available sockets, looped around too many times
+        return NULL;
+      }
+    }
   }
 
   /**
@@ -31,6 +100,11 @@ implementation {
   command error_t TransportP.bind(socket_t fd, socket_addr_t * addr) {
     // Perhaps this could be as simple as setting addr->port = fd?
     // error_t: 0 = success, 1 = failure
+    
+    // Is the address the node we are setting up a connection too? or the node we are in
+    //       If its node we are connecting too we could have an array to store it 
+    //          0    1    2 ...... fd/sockets
+    //         addr addr addr ...... address we are connecting too 
     error_t result = 0;
     return result;
   }
@@ -47,16 +121,19 @@ implementation {
    *    a destination associated with the destination address and port.
    *    if not return a null socket.
    */
-  command socket_t TransportP.accept(socket_t fd) {}
+  command socket_t TransportP.accept(socket_t fd) {
+    // There is a queue of incoming connections. This command should accept the first connection
+    // in the queue, create a new connected socket, and return the file descriptor for that socket.
+  }
 
   /**
    * Write to the socket from a buffer. This data will eventually be
-   * transmitted through your TCP implimentation.
+   * transmitted through your TCP implementation.
    * @param
    *    socket_t fd: file descriptor that is associated with the socket
    *       that is attempting a write.
    * @param
-   *    uint8_t *buff: the buffer data that you are going to wrte from.
+   *    uint8_t *buff: the buffer data that you are going to write from.
    * @param
    *    uint16_t bufflen: The amount of data that you are trying to
    *       submit.
@@ -79,7 +156,7 @@ implementation {
 
   /**
    * Read from the socket and write this data to the buffer. This data
-   * is obtained from your TCP implimentation.
+   * is obtained from your TCP implementation.
    * @param
    *    socket_t fd: file descriptor that is associated with the socket
    *       that is attempting a read.
