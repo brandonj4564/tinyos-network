@@ -7,6 +7,7 @@ module TransportP {
   uses interface Boot;
   uses interface InternetProtocol;
   uses interface Timer<TMilli> as Timer;
+  uses interface List<connection_t> as PendingConnections;
 }
 
 implementation {
@@ -17,15 +18,19 @@ implementation {
     FIN = 3,
   };
 
-  typedef struct packTCP {
-    uint8_t srcPort;
-    uint8_t destPort;
-    uint8_t seq;
-    uint8_t ack;
-    uint8_t flag;
-    uint8_t window;
-    uint8_t payload[0];
-  } packTCP;
+  typedef nx_struct packTCP {
+    nx_uint16_t srcAddr;
+    nx_uint16_t srcPort;
+    nx_uint16_t destPort;
+    nx_uint16_t seq;
+    nx_uint16_t ack;
+    nx_uint16_t flag;
+    nx_uint16_t window;
+    nx_uint16_t payload[0];
+  }
+  packTCP;
+
+  connection_t connectionList[MAX_CONNECTIONS];
 
   socket_store_t socketList[MAX_NUM_OF_SOCKETS];
   // currentSocket is used to index socketList
@@ -51,6 +56,7 @@ implementation {
     call Transport.bind(fd, &source); // binds port
     dbg(GENERAL_CHANNEL, "Socket port: %i\n", socketList[fd].src);
     call Transport.connect(fd, &dest); // connect to node 2
+    dbg(GENERAL_CHANNEL, "Socket dest: %i\n", socketList[fd].dest.addr);
   }
 
   event void Boot.booted() {
@@ -192,12 +198,31 @@ implementation {
   command error_t Transport.receive(uint8_t * payload) {
     // IP unwraps its header and passes the payload up to TCP
     packTCP *msg = (packTCP *)payload;
+    uint8_t srcAddr = msg->srcAddr;
     uint8_t srcPort = msg->srcPort;
+    uint8_t destPort = msg->destPort;
+    uint8_t flag = msg->flag;
 
-    dbg(GENERAL_CHANNEL, "TCP syn message received from source port %i\n",
-        srcPort);
+    if (flag == SYN) {
+      // Sync packet, add the new connection request to the list of requests
+      connection_t newConn;
+      newConn.srcAddr = srcAddr;
+      newConn.srcPort = srcPort;
+      newConn.destPort = destPort;
+      newConn.seq = msg->seq;
 
-    return SUCCESS;
+      // put the new connection in the back of the queue
+      call PendingConnections.pushback(newConn);
+
+      return SUCCESS;
+    } else if (flag == FIN) {
+      // Close the connection
+      // TODO
+    } else if (flag == ACK) {
+      // TODO
+    }
+
+    return FAIL;
   }
 
   /**
@@ -218,9 +243,10 @@ implementation {
   command uint16_t Transport.read(socket_t fd, uint8_t * buff,
                                   uint16_t bufflen) {}
 
-  void makeTCP(packTCP * Package, uint8_t srcPort, uint8_t destPort,
-               uint8_t flag, uint8_t ack, uint8_t seq, uint8_t window,
-               uint8_t * payload, uint8_t length) {
+  void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+               uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+               uint8_t window, uint8_t * payload, uint8_t length) {
+    Package->srcAddr = srcAddr;
     Package->srcPort = srcPort;
     Package->destPort = destPort;
     Package->ack = ack;
@@ -274,8 +300,8 @@ implementation {
       uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
       uint16_t sizeTCP = sizeof(packTCP);
 
-      makeTCP(&msg, srcPort, destPort, flag, initialAck, initialSeq, window,
-              payloadSYN, 0);
+      makeTCP(&msg, TOS_NODE_ID, srcPort, destPort, flag, initialAck,
+              initialSeq, window, payloadSYN, 0);
 
       memcpy(payloadIP, (void *)(&msg), sizeTCP);
 
@@ -285,6 +311,8 @@ implementation {
       // Assign the destination field in socket_store_t
       socket->dest.port = addr->port;
       socket->dest.addr = addr->addr;
+
+      socket->state = SYN_SENT;
 
       return SUCCESS;
     }
