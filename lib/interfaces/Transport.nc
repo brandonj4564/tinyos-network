@@ -79,7 +79,7 @@ interface Transport {
    * @return uint16_t - return SUCCESS if you are able to handle this
    *    packet or FAIL if there are errors.
    */
-  command error_t receive(pack * package);
+  command error_t receive(uint8_t * payload);
 
   /**
    * Read from the socket and write this data to the buffer. This data

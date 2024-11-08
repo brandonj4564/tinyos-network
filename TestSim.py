@@ -144,7 +144,7 @@ def main():
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
-    s.runTime(10);
+    s.runTime(40);
 
     # Project 1
     # s.addChannel(s.NEIGHBOR_CHANNEL);

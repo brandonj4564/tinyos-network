@@ -3,6 +3,7 @@ module InternetProtocolP {
 
   uses interface SimpleSend;
   uses interface LinkState;
+  uses interface Transport;
 }
 
 implementation {
@@ -67,7 +68,7 @@ implementation {
     makeIP(&datagramIP, TOS_NODE_ID, dest, TTL, protocol, payload, length);
     memcpy(normalPayload, (void *)(&datagramIP), sizeIP);
 
-    makePack(&message, TOS_NODE_ID, dest, TTL, protocol, sequenceNum,
+    makePack(&message, TOS_NODE_ID, dest, TTL, PROTOCOL_IP, sequenceNum,
              normalPayload, sizeIP);
     sequenceNum++;
 
@@ -86,17 +87,25 @@ implementation {
     uint16_t src = datagram->src;
 
     if (dest == TOS_NODE_ID) {
-      char *payload;
       // Message reached destination
       dbg(GENERAL_CHANNEL, "IP: FINALLY REACHED DESTINATION, SENT FROM %i\n",
           src);
-      dbg(GENERAL_CHANNEL, "Payload: %s\n", (char *)datagram->payload);
 
       // Send a ping reply
       if (datagram->protocol == PROTOCOL_PING) {
-        payload = "Ping Reply received.";
+        char *payload = "Ping Reply received.";
+
+        dbg(GENERAL_CHANNEL, "Payload: %s\n", (char *)datagram->payload);
+
         call InternetProtocol.sendMessage(src, 10, PROTOCOL_PINGREPLY,
                                           (uint8_t *)payload, 20);
+
+      } else if (datagram->protocol == PROTOCOL_PINGREPLY) {
+        dbg(GENERAL_CHANNEL, "Payload: %s\n", (char *)datagram->payload);
+
+      } else if (datagram->protocol == PROTOCOL_TCP) {
+        // TCP packet, pass to Transport
+        call Transport.receive((uint8_t *)datagram->payload);
       }
       return;
     }
