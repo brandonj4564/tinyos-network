@@ -115,6 +115,9 @@ implementation {
 
   event void Transport.newConnectionReceived() {
     dbg(GENERAL_CHANNEL, "New connection received!\n");
+    if (TOS_NODE_ID == 2) {
+      call Transport.accept(0);
+    }
   }
 
   event void CommandHandler.printRouteTable() {
