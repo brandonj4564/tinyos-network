@@ -132,4 +132,6 @@ implementation {
     dbg(GENERAL_CHANNEL, "IP: Forwarding message to %i.\n", nextHop);
     call SimpleSend.send(*msg, nextHop);
   }
+
+  event void Transport.newConnectionReceived() {}
 }

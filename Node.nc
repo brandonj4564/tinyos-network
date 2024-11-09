@@ -113,6 +113,10 @@ implementation {
     // dbg(GENERAL_CHANNEL, "the neighborlist is updated\n");
   }
 
+  event void Transport.newConnectionReceived() {
+    dbg(GENERAL_CHANNEL, "New connection received!\n");
+  }
+
   event void CommandHandler.printRouteTable() {
     int numRoutes = call LinkState.getNumActiveRoutes();
     int routes[numRoutes];

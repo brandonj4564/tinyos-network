@@ -30,7 +30,55 @@ implementation {
   }
   packTCP;
 
-  connection_t connectionList[MAX_CONNECTIONS];
+  // Null socket, an invalid socket fd
+  const uint16_t NULL_SOCKET = MAX_NUM_OF_SOCKETS + 1;
+
+  // A FIFO queue for each potential socket
+  connection_t connectionList[MAX_NUM_OF_SOCKETS][MAX_CONNECTIONS];
+  uint16_t connectionListIndex[MAX_NUM_OF_SOCKETS];
+
+  // These functions have to be reimplemented because each LISTEN socket needs
+  // its own queue
+  connection_t popFrontConnection(socket_t fd) {
+    connection_t returnVal;
+    uint16_t i;
+    uint16_t size = connectionListIndex[fd];
+
+    returnVal = connectionList[fd][0];
+    if (size > 0) {
+      // Move everything to the left.
+      for (i = 0; i < size - 1; i++) {
+        connectionList[fd][i] = connectionList[fd][i + 1];
+      }
+      size--;
+    }
+
+    return returnVal;
+  }
+
+  int getQueueSize(socket_t fd) {
+    if (fd > 0 && fd < MAX_NUM_OF_SOCKETS) {
+      return connectionListIndex[fd];
+    }
+    return NULL_SOCKET;
+  }
+
+  connection_t front(socket_t fd) { return connectionList[fd][0]; }
+
+  void pushBack(socket_t fd, connection_t connection) {
+    uint16_t ind;
+    if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return;
+    }
+    ind = connectionListIndex[fd];
+
+    (connectionList[fd][ind]).srcAddr = connection.srcAddr;
+    (connectionList[fd][ind]).srcPort = connection.srcPort;
+    (connectionList[fd][ind]).destPort = connection.destPort;
+    (connectionList[fd][ind]).seq = connection.seq;
+
+    connectionListIndex[fd] = connectionListIndex[fd] + 1;
+  }
 
   socket_store_t socketList[MAX_NUM_OF_SOCKETS];
   // currentSocket is used to index socketList
@@ -64,6 +112,7 @@ implementation {
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       // Initialize all sockets as being free and with default values
       socketList[i].state = CLOSED;
+      socketList[i].bound = FALSE;
       socketList[i].flag = 0;
       socketList[i].src = 0;
       socketList[i].dest.port = 0;
@@ -84,6 +133,8 @@ implementation {
       // Optionally initialize buffers to zero
       memset(socketList[i].sendBuff, 0, SOCKET_BUFFER_SIZE);
       memset(socketList[i].rcvdBuff, 0, SOCKET_BUFFER_SIZE);
+
+      connectionListIndex[i] = 0;
     }
 
     call Timer.startOneShot(30000);
@@ -103,7 +154,7 @@ implementation {
     uint8_t counter = 0; // Prevent infinite loops if no sockets are available
 
     while (1) {
-      if (socketList[currentSocket % MAX_NUM_OF_SOCKETS].state == CLOSED) {
+      if (!(socketList[currentSocket % MAX_NUM_OF_SOCKETS].bound)) {
         // socket_t is just a reskinned uint8_t anyways so it's fine to typecast
         sock = (socket_t)(currentSocket % MAX_NUM_OF_SOCKETS);
         currentSocket++;
@@ -115,8 +166,7 @@ implementation {
 
       if (counter > MAX_NUM_OF_SOCKETS) {
         // No available sockets, looped around too many times
-        sock = (socket_t)NULL;
-        return sock;
+        return NULL_SOCKET;
       }
     }
   }
@@ -139,13 +189,13 @@ implementation {
       return FAIL; // Return an error if the fd is out of range
     }
 
-    // Check if the socket is currently closed before binding
-    if (socketList[fd].state != CLOSED) {
-      return FAIL; // Cannot bind if the socket is not in CLOSED state
+    // Check if the socket is already bound
+    if (socketList[fd].bound) {
+      return FAIL; // Cannot bind if the socket is already bound
     }
 
     // Set state to Listen to prevent other sockets from binding
-    call Transport.listen(fd);
+    socketList[fd].bound = 1; // bind fd
     socketList[fd].src = addr->port;
 
     return SUCCESS;
@@ -164,9 +214,70 @@ implementation {
    *    if not return a null socket.
    */
   command socket_t Transport.accept(socket_t fd) {
-    // There is a queue of incoming connections. This command should accept the
-    // first connection in the queue, create a new connected socket, and return
-    // the file descriptor for that socket.
+    // This command is called by applications
+    // The fd arg is the LISTEN socket with the port the application wants to
+    // accept a new connection from
+    connection_t newConn = call PendingConnections.front();
+    socket_t newSocket = NULL_SOCKET;
+    int i;
+
+    if (fd == NULL_SOCKET || fd < 0 || fd > MAX_NUM_OF_SOCKETS) {
+      return NULL_SOCKET;
+    }
+
+    if (call PendingConnections.isEmpty()) {
+      return NULL_SOCKET;
+    }
+
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      // Check if there is a CLOSED and unbound socket to fork
+      if (socketList[i].state == CLOSED && !socketList[i].bound) {
+        newSocket = i;
+        break;
+      }
+    }
+
+    if (newSocket == NULL_SOCKET) {
+      return NULL_SOCKET;
+    }
+    // Create packets for SYN and Ack and send it to the client ???
+
+    packTCP msg;
+    // Given that this is a SYN packet, most fields (like window) don't matter
+    uint8_t flag = SYN;
+    uint8_t initialSeq = 0;
+    uint8_t initialAck = 0;
+    uint8_t window = 0;
+
+    socket_store_t *socket = &(socketList[fd]);
+    uint8_t srcPort = socket->src;
+    uint8_t destPort = addr->port;
+
+    // Headers for IP
+    uint16_t destAddress = addr->addr;
+    uint8_t TTL = 10;
+    uint16_t protocol = PROTOCOL_TCP;
+
+    uint8_t payloadSYN[0]; // SYN packets carry no payload
+
+    uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+    uint16_t sizeTCP = sizeof(packTCP);
+
+    makeTCP(&msg, TOS_NODE_ID, srcPort, destPort, flag, initialAck, initialSeq,
+            window, payloadSYN, 0);
+
+    memcpy(payloadIP, (void *)(&msg), sizeTCP);
+
+    call InternetProtocol.sendMessage(destAddress, TTL, protocol, payloadIP,
+                                      sizeTCP);
+
+    // Assign the destination field in socket_store_t
+    socket->dest.port = addr->port;
+    socket->dest.addr = addr->addr;
+
+    socket->state = SYN_SENT;
+
+    return newSocket;
   }
 
   /**
@@ -205,14 +316,40 @@ implementation {
 
     if (flag == SYN) {
       // Sync packet, add the new connection request to the list of requests
-      connection_t newConn;
-      newConn.srcAddr = srcAddr;
-      newConn.srcPort = srcPort;
-      newConn.destPort = destPort;
-      newConn.seq = msg->seq;
+      uint16_t connIndex = connectionListIndex[fd];
+      connection_t *newConn = &(connectionList[fd][connIndex]);
+      socket_t fd = NULL_SOCKET;
 
-      // put the new connection in the back of the queue
-      call PendingConnections.pushback(newConn);
+      uint16_t i;
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t currSock = socketList[i];
+
+        if (currSock.state != CLOSED && currSock.src == destPort &&
+            currSock.dest.port == srcPort && currSock.dest.addr == srcAddr) {
+          // Basically, is there an existing socket already allocated to this
+          // specific connection with the same ports and addresses?
+
+          // If yes, then the SYN packet is a dupe of some sort
+          return FAIL; // TODO: figure out how to handle dupe SYN
+        }
+
+        // Find the LISTEN socket with the corresponding port
+        if (currSock.state == LISTEN && currSock.src == destPort) {
+          fd = i;
+        }
+      }
+
+      if (fd == NULL_SOCKET) {
+        // No matching LISTEN socket with same port, FAIL
+        return FAIL;
+      }
+
+      newConn->srcAddr = srcAddr;
+      newConn->srcPort = srcPort;
+      newConn->destPort = destPort;
+      newConn->seq = msg->seq;
+
+      signal Transport.newConnectionReceived();
 
       return SUCCESS;
     } else if (flag == FIN) {
@@ -272,8 +409,8 @@ implementation {
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return FAIL;
 
-    } else if (socketList[fd].state == CLOSED) {
-      // Closed state means it's inactive and unbound, so fail
+    } else if (!socketList[fd].bound) {
+      // Unbound, so fail
       return FAIL;
 
     } else {
@@ -351,6 +488,11 @@ implementation {
    */
   command error_t Transport.listen(socket_t fd) {
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return FAIL;
+    }
+
+    if (!socketList[fd].bound) {
+      // Unbound, so fail
       return FAIL;
     }
 
