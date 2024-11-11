@@ -15,7 +15,10 @@ implementation {
     // Flags
     SYN = 1,
     ACK = 2,
-    FIN = 3,
+    SYNACK = 3,
+    FIN = 4,
+    RST = 5,
+    DATA = 6
   };
 
   typedef nx_struct packTCP {
@@ -104,6 +107,7 @@ implementation {
     int i;
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       if (socketList[i].bound) {
+        dbg(GENERAL_CHANNEL, "-----NEW SOCKET-----\n");
         dbg(GENERAL_CHANNEL, "Socket fd: %i\n", i);
         dbg(GENERAL_CHANNEL, "Socket state: %i\n", socketList[i].state);
         dbg(GENERAL_CHANNEL, "Socket port: %i\n", socketList[i].src);
@@ -322,7 +326,7 @@ implementation {
     // A hack to improve readability by initializing variables later
     if (1) {
       socket_store_t *boundSocket = &(socketList[newSocket]);
-      uint8_t serverISN = call Random.rand16() % 254;
+      uint8_t serverISN = call Random.rand16() % 256;
       uint8_t clientISN = newConn.seq;
       packTCP msg;
 
@@ -339,7 +343,7 @@ implementation {
                uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
                uint8_t window, uint8_t * payload, uint8_t length)
       */
-      makeTCP(&msg, TOS_NODE_ID, socketAddr.port, newConn.srcPort, SYN,
+      makeTCP(&msg, TOS_NODE_ID, socketAddr.port, newConn.srcPort, SYNACK,
               clientISN + 1, serverISN, boundSocket->effectiveWindow,
               payloadSYN, 0);
 
@@ -375,7 +379,33 @@ implementation {
    *    from the pass buffer. This may be shorter then bufflen
    */
   command uint16_t Transport.write(socket_t fd, uint8_t * buff,
-                                   uint16_t bufflen) {}
+                                   uint16_t bufflen) {
+    // Called by applications
+    socket_store_t *currSock;
+    uint16_t trueBuffLen = bufflen;
+    uint16_t i;
+    if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return 0;
+    }
+
+    currSock = &socketList[fd];
+
+    if (!(currSock->bound) || currSock->state != ESTABLISHED) {
+      // socket has to be bound and already established
+      return 0;
+    }
+
+    if (currSock->lastWritten + bufflen > SOCKET_BUFFER_SIZE) {
+      // Buffer can't fit everything, have to shorten bufflen
+      trueBuffLen = SOCKET_BUFFER_SIZE - currSock->lastWritten;
+    }
+
+    for (i = 0; i < trueBuffLen; i++) {
+      // Copy buff into the socket buffer starting from lastWritten
+      (currSock->sendBuff)[currSock->lastWritten + i] = buff[i];
+    }
+    return trueBuffLen;
+  }
 
   error_t handleSYN(packTCP * msg) {
     uint8_t srcAddr = msg->srcAddr;
@@ -393,39 +423,7 @@ implementation {
       if (currSock.src == destPort && currSock.dest.port == srcPort &&
           currSock.dest.addr == srcAddr && currSock.bound) {
 
-        if (currSock.state == SYN_SENT) {
-          // Checks if this is a SYN + ACK from a server to an existing
-          // SYN_SENT socket
-
-          packTCP msgAck;
-          uint8_t payloadSYN[0];
-          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
-          uint16_t sizeTCP = sizeof(packTCP);
-
-          /*
-          void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
-                   uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
-                   uint8_t window, uint8_t * payload, uint8_t length)
-          */
-
-          // Client sends one last ACK packet to server ACKing the server's ISN
-          // + 1 to complete the three way handshake
-          makeTCP(&msgAck, TOS_NODE_ID, currSock.src, currSock.dest.port, ACK,
-                  msg->seq + 1, currSock.lastSent + 1, 0, payloadSYN, 0);
-
-          memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
-
-          call InternetProtocol.sendMessage(currSock.dest.addr, 10,
-                                            PROTOCOL_TCP, payloadIP, sizeTCP);
-
-          currSock.state = ESTABLISHED;
-          currSock.lastSent = currSock.lastSent + 1;
-          currSock.lastAck = msg->ack;
-          // dbg(GENERAL_CHANNEL, "SYN + ACK rcvd\n");
-
-          return SUCCESS;
-
-        } else if (currSock.state == ESTABLISHED) {
+        if (currSock.state == ESTABLISHED) {
           // Basically, is there an existing socket already allocated to this
           // specific connection with the same ports and addresses?
 
@@ -462,6 +460,45 @@ implementation {
     return SUCCESS;
   }
 
+  error_t handleACK(packTCP * msg) {
+    int8_t srcAddr = msg->srcAddr;
+    uint8_t srcPort = msg->srcPort;
+    uint8_t destPort = msg->destPort;
+
+    uint16_t i;
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      socket_store_t *currSock = &socketList[i];
+      if (currSock->src == destPort && currSock->dest.port == srcPort &&
+          currSock->dest.addr == srcAddr && currSock->bound &&
+          currSock->state != LISTEN) {
+
+        if (currSock->state == SYN_RCVD) {
+          // if state is SYN_RCVD, then this node is the server and this is the
+          // last part of the three way handshake
+
+          currSock->lastRcvd = currSock->lastRcvd + 1; // increase server seq
+          currSock->nextExpected = msg->seq + 1;       // update server ack
+          currSock->state = ESTABLISHED;
+          dbg(GENERAL_CHANNEL,
+              "Three way handshake complete, socket %i conn established\n", i);
+          printSockets();
+
+          return SUCCESS;
+
+        } else if (currSock->state == ESTABLISHED) {
+          // This code will be executed by the client
+
+        } else {
+          // ACK packets should only be received when the state is SYN_RCVD or
+          // ESTABLISHED
+          return FAIL;
+        }
+      }
+    }
+
+    return FAIL;
+  }
+
   /**
    * This will pass the packet so you can handle it internally.
    * @param
@@ -477,12 +514,56 @@ implementation {
 
     if (flag == SYN) {
       return handleSYN(msg);
+    } else if (flag == DATA) {
+      // Needed because ACK packets don't carry data in this implementation
     } else if (flag == FIN) {
       // Close the connection
       // TODO
     } else if (flag == ACK) {
-      // TODO
-      dbg(GENERAL_CHANNEL, "new ACK connection\n");
+      return handleACK(msg);
+    } else if (flag == SYNACK) {
+      uint16_t i;
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &(socketList[i]);
+
+        if (currSock->src == msg->destPort &&
+            currSock->dest.port == msg->srcPort &&
+            currSock->dest.addr == msg->srcAddr && currSock->bound &&
+            currSock->state == SYN_SENT) {
+          // Checks if this is a SYN + ACK from a server to an existing
+          // SYN_SENT socket
+
+          packTCP msgAck;
+          uint8_t payloadSYN[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          uint16_t sizeTCP = sizeof(packTCP);
+
+          // Client sends one last ACK packet to server ACKing the server's
+          // ISN
+          // + 1 to complete the three way handshake
+          makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
+                  msg->seq + 1, currSock->lastSent + 1, 0, payloadSYN, 0);
+
+          memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
+
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
+
+          currSock->state = ESTABLISHED;
+          currSock->lastSent = currSock->lastSent + 1;
+          currSock->lastAck = msg->ack;
+
+          dbg(GENERAL_CHANNEL, "SYN + ACK rcvd\n");
+          printSockets();
+
+          // TODO: signal some event that means you can send data
+
+          return SUCCESS;
+        }
+      }
+    } else if (flag == RST) {
+      // RST requires a hard close
+      call Transport.release(2);
     }
 
     return FAIL;
@@ -530,10 +611,11 @@ implementation {
       // Create a SYN packet with no payload and send it to the dest addr and
       // port
       packTCP msg;
-      // Given that this is a SYN packet, most fields (like window) don't matter
+      // Given that this is a SYN packet, most fields (like window) don't
+      // matter
       uint8_t flag = SYN;
       // Randomize initial sequence number
-      uint8_t initialSeq = call Random.rand16() % 254;
+      uint8_t initialSeq = call Random.rand16() % 256;
       uint8_t initialAck = 0;
       uint8_t window = 0;
 
