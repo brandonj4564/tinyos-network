@@ -42,13 +42,13 @@ typedef struct socket_store_t {
   uint8_t sendBuff[SOCKET_BUFFER_SIZE];
   uint8_t lastWritten;
   uint8_t lastAck;
-  uint8_t lastSent;
+  uint8_t lastSent; // this is seq
 
   // This is the receiver portion
   uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
   uint8_t lastRead;
-  uint8_t lastRcvd;
-  uint8_t nextExpected;
+  uint8_t lastRcvd;     // this is actually server's sequence num
+  uint8_t nextExpected; // this is the client's seq + 1 (ACK)
 
   uint16_t RTT;
   uint8_t effectiveWindow;

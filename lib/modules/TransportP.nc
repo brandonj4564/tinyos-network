@@ -7,7 +7,7 @@ module TransportP {
   uses interface Boot;
   uses interface InternetProtocol;
   uses interface Timer<TMilli> as Timer;
-  uses interface List<connection_t> as PendingConnections;
+  uses interface Random;
 }
 
 implementation {
@@ -19,14 +19,14 @@ implementation {
   };
 
   typedef nx_struct packTCP {
-    nx_uint16_t srcAddr;
-    nx_uint16_t srcPort;
-    nx_uint16_t destPort;
-    nx_uint16_t seq;
-    nx_uint16_t ack;
-    nx_uint16_t flag;
-    nx_uint16_t window;
-    nx_uint16_t payload[0];
+    nx_uint8_t srcAddr;
+    nx_uint8_t srcPort;
+    nx_uint8_t destPort;
+    nx_uint8_t seq; // initial seq should be randomized based on clock
+    nx_uint8_t ack;
+    nx_uint8_t flag;
+    nx_uint8_t window;
+    nx_uint8_t payload[0];
   }
   packTCP;
 
@@ -99,9 +99,42 @@ implementation {
   // currentSocket is used to index socketList
   uint8_t currentSocket = 0;
 
-  event void Timer.fired() {
+  void printSockets() {
+    // TODO: make a command that prints out all info for the sockets for testing
     int i;
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      if (socketList[i].bound) {
+        dbg(GENERAL_CHANNEL, "Socket fd: %i\n", i);
+        dbg(GENERAL_CHANNEL, "Socket state: %i\n", socketList[i].state);
+        dbg(GENERAL_CHANNEL, "Socket port: %i\n", socketList[i].src);
+        dbg(GENERAL_CHANNEL, "Socket dest addr: %i\n", socketList[i].dest.addr);
+        dbg(GENERAL_CHANNEL, "Socket dest port: %i\n", socketList[i].dest.port);
 
+        // Sender portion
+        dbg(GENERAL_CHANNEL, "Sender portion\n");
+        dbg(GENERAL_CHANNEL, "Socket last written: %i\n",
+            socketList[i].lastWritten);
+        dbg(GENERAL_CHANNEL, "Socket last ack rcvd: %i\n",
+            socketList[i].lastAck);
+        dbg(GENERAL_CHANNEL, "Socket last seq sent: %i\n",
+            socketList[i].lastSent);
+
+        // Receiver portion
+        dbg(GENERAL_CHANNEL, "Receiver portion\n");
+        dbg(GENERAL_CHANNEL, "Socket last read: %i\n", socketList[i].lastRead);
+        dbg(GENERAL_CHANNEL, "Socket last seq rcvd: %i\n",
+            socketList[i].lastRcvd);
+        dbg(GENERAL_CHANNEL, "Socket next expected: %i\n",
+            socketList[i].nextExpected);
+
+        dbg(GENERAL_CHANNEL, "Socket RTT: %i\n", socketList[i].RTT);
+        dbg(GENERAL_CHANNEL, "Socket adv window: %i\n",
+            socketList[i].effectiveWindow);
+      }
+    }
+  }
+
+  event void Timer.fired() {
     if (TOS_NODE_ID == 3) {
       socket_t fd;
       socket_addr_t source;
@@ -112,20 +145,11 @@ implementation {
       dest.port = 10;
       dest.addr = 2;
 
-      fd = call Transport.socket(); // gets socket
-      dbg(GENERAL_CHANNEL, "Socket fd: %i\n", fd);
-      call Transport.bind(fd, &source); // binds port
-      dbg(GENERAL_CHANNEL, "Socket port: %i\n", socketList[fd].src);
+      fd = call Transport.socket();      // gets socket
+      call Transport.bind(fd, &source);  // binds port
       call Transport.connect(fd, &dest); // connect to node 2
-      dbg(GENERAL_CHANNEL, "Socket dest: %i\n", socketList[fd].dest.addr);
     }
-
-    // TODO: make a command that prints out all info for the sockets for testing
-    // for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-    //   dbg(GENERAL_CHANNEL, "Socket bound: %i\n", socketList[i].bound);
-    //   dbg(GENERAL_CHANNEL, "Socket state: %i\n", socketList[i].state);
-    //   dbg(GENERAL_CHANNEL, "Socket port: %i\n", socketList[i].src);
-    // }
+    printSockets();
   }
 
   void initTestListeners() {
@@ -297,15 +321,27 @@ implementation {
 
     // A hack to improve readability by initializing variables later
     if (1) {
-      socket_store_t *boundSocket = &(socketList[fd]);
+      socket_store_t *boundSocket = &(socketList[newSocket]);
+      uint8_t serverISN = call Random.rand16() % 254;
+      uint8_t clientISN = newConn.seq;
       packTCP msg;
 
       uint8_t payloadSYN[0]; // SYN packets carry no payload
       uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
       uint16_t sizeTCP = sizeof(packTCP);
 
-      makeTCP(&msg, TOS_NODE_ID, socketAddr.port, newConn.srcPort, SYN, 0,
-              newConn.seq, 0, payloadSYN, 0);
+      // initialize the sequence numbers for both client and server
+      boundSocket->lastRcvd = serverISN;
+      boundSocket->nextExpected = clientISN + 1;
+
+      /*
+      void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+               uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+               uint8_t window, uint8_t * payload, uint8_t length)
+      */
+      makeTCP(&msg, TOS_NODE_ID, socketAddr.port, newConn.srcPort, SYN,
+              clientISN + 1, serverISN, boundSocket->effectiveWindow,
+              payloadSYN, 0);
 
       memcpy(payloadIP, (void *)(&msg), sizeTCP);
 
@@ -316,8 +352,10 @@ implementation {
       boundSocket->dest.port = newConn.srcPort;
       boundSocket->dest.addr = newConn.srcAddr;
 
-      boundSocket->state = SYN_SENT;
+      boundSocket->state = SYN_RCVD;
     }
+
+    printSockets(); // Remove later
     return newSocket;
   }
 
@@ -339,6 +377,91 @@ implementation {
   command uint16_t Transport.write(socket_t fd, uint8_t * buff,
                                    uint16_t bufflen) {}
 
+  error_t handleSYN(packTCP * msg) {
+    uint8_t srcAddr = msg->srcAddr;
+    uint8_t srcPort = msg->srcPort;
+    uint8_t destPort = msg->destPort;
+
+    // Sync packet, add the new connection request to the list of requests
+    connection_t newConn;
+    socket_t fd = NULL_SOCKET;
+
+    uint16_t i;
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      socket_store_t currSock = socketList[i];
+
+      if (currSock.src == destPort && currSock.dest.port == srcPort &&
+          currSock.dest.addr == srcAddr && currSock.bound) {
+
+        if (currSock.state == SYN_SENT) {
+          // Checks if this is a SYN + ACK from a server to an existing
+          // SYN_SENT socket
+
+          packTCP msgAck;
+          uint8_t payloadSYN[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          uint16_t sizeTCP = sizeof(packTCP);
+
+          /*
+          void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+                   uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+                   uint8_t window, uint8_t * payload, uint8_t length)
+          */
+
+          // Client sends one last ACK packet to server ACKing the server's ISN
+          // + 1 to complete the three way handshake
+          makeTCP(&msgAck, TOS_NODE_ID, currSock.src, currSock.dest.port, ACK,
+                  msg->seq + 1, currSock.lastSent + 1, 0, payloadSYN, 0);
+
+          memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
+
+          call InternetProtocol.sendMessage(currSock.dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
+
+          currSock.state = ESTABLISHED;
+          currSock.lastSent = currSock.lastSent + 1;
+          currSock.lastAck = msg->ack;
+          // dbg(GENERAL_CHANNEL, "SYN + ACK rcvd\n");
+
+          return SUCCESS;
+
+        } else if (currSock.state == ESTABLISHED) {
+          // Basically, is there an existing socket already allocated to this
+          // specific connection with the same ports and addresses?
+
+          // If yes, then the SYN packet is a dupe of some sort
+          dbg(GENERAL_CHANNEL, "dupe syn\n");
+          return FAIL;
+        }
+      }
+
+      // Find the LISTEN socket with the corresponding port
+      if (currSock.state == LISTEN && currSock.src == destPort) {
+        fd = i;
+      }
+    }
+
+    if (fd == NULL_SOCKET) {
+      // No matching LISTEN socket with same port, FAIL
+      return FAIL;
+    }
+    // dbg(GENERAL_CHANNEL, "syn still valid with fd %i\n", fd);
+
+    newConn.srcAddr = srcAddr;
+    newConn.srcPort = srcPort;
+    newConn.destPort = destPort;
+    newConn.seq = msg->seq;
+
+    if (getQueueSize(fd) < MAX_CONNECTIONS) {
+      // Only push the new connections onto the queue if there is space
+      pushBack(fd, newConn);
+
+      signal Transport.newConnectionReceived();
+    }
+
+    return SUCCESS;
+  }
+
   /**
    * This will pass the packet so you can handle it internally.
    * @param
@@ -350,60 +473,16 @@ implementation {
   command error_t Transport.receive(uint8_t * payload) {
     // IP unwraps its header and passes the payload up to TCP
     packTCP *msg = (packTCP *)payload;
-    uint8_t srcAddr = msg->srcAddr;
-    uint8_t srcPort = msg->srcPort;
-    uint8_t destPort = msg->destPort;
     uint8_t flag = msg->flag;
 
     if (flag == SYN) {
-      // Sync packet, add the new connection request to the list of requests
-      connection_t newConn;
-      socket_t fd = NULL_SOCKET;
-
-      uint16_t i;
-      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-        socket_store_t currSock = socketList[i];
-
-        if (currSock.state != CLOSED && currSock.state != LISTEN &&
-            currSock.src == destPort && currSock.dest.port == srcPort &&
-            currSock.dest.addr == srcAddr && currSock.bound) {
-          // Basically, is there an existing socket already allocated to this
-          // specific connection with the same ports and addresses?
-
-          // If yes, then the SYN packet is a dupe of some sort
-          return FAIL; // TODO: figure out how to handle dupe SYN
-        }
-
-        // Find the LISTEN socket with the corresponding port
-        if (currSock.state == LISTEN && currSock.src == destPort) {
-          fd = i;
-        }
-      }
-
-      if (fd == NULL_SOCKET) {
-        // No matching LISTEN socket with same port, FAIL
-        return FAIL;
-      }
-      // dbg(GENERAL_CHANNEL, "syn still valid with fd %i\n", fd);
-
-      newConn.srcAddr = srcAddr;
-      newConn.srcPort = srcPort;
-      newConn.destPort = destPort;
-      newConn.seq = msg->seq;
-
-      if (getQueueSize(fd) < MAX_CONNECTIONS) {
-        // Only push the new connections onto the queue if there is space
-        pushBack(fd, newConn);
-
-        signal Transport.newConnectionReceived();
-      }
-
-      return SUCCESS;
+      return handleSYN(msg);
     } else if (flag == FIN) {
       // Close the connection
       // TODO
     } else if (flag == ACK) {
       // TODO
+      dbg(GENERAL_CHANNEL, "new ACK connection\n");
     }
 
     return FAIL;
@@ -453,7 +532,8 @@ implementation {
       packTCP msg;
       // Given that this is a SYN packet, most fields (like window) don't matter
       uint8_t flag = SYN;
-      uint8_t initialSeq = 0;
+      // Randomize initial sequence number
+      uint8_t initialSeq = call Random.rand16() % 254;
       uint8_t initialAck = 0;
       uint8_t window = 0;
 
@@ -482,6 +562,7 @@ implementation {
       // Assign the destination field in socket_store_t
       socket->dest.port = addr->port;
       socket->dest.addr = addr->addr;
+      socket->lastSent = initialSeq;
 
       socket->state = SYN_SENT;
 

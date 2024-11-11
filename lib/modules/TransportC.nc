@@ -1,5 +1,3 @@
-#include "../../includes/socket.h"
-
 configuration TransportC { provides interface Transport; }
 
 implementation {
@@ -9,10 +7,10 @@ implementation {
   components MainC;
   components InternetProtocolC;
   components new TimerMilliC() as Timer;
-  components new ListC(connection_t, MAX_CONNECTIONS) as PendingConnections;
+  components RandomC as Random;
 
   TransportP->MainC.Boot;
   TransportP.InternetProtocol->InternetProtocolC;
   TransportP.Timer->Timer;
-  TransportP.PendingConnections->PendingConnections;
+  TransportP.Random->Random;
 }
