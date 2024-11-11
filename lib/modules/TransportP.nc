@@ -107,32 +107,35 @@ implementation {
     int i;
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       if (socketList[i].bound) {
-        dbg(GENERAL_CHANNEL, "-----NEW SOCKET-----\n");
-        dbg(GENERAL_CHANNEL, "Socket fd: %i\n", i);
-        dbg(GENERAL_CHANNEL, "Socket state: %i\n", socketList[i].state);
-        dbg(GENERAL_CHANNEL, "Socket port: %i\n", socketList[i].src);
-        dbg(GENERAL_CHANNEL, "Socket dest addr: %i\n", socketList[i].dest.addr);
-        dbg(GENERAL_CHANNEL, "Socket dest port: %i\n", socketList[i].dest.port);
+        dbg(TRANSPORT_CHANNEL, "-----NEW SOCKET-----\n");
+        dbg(TRANSPORT_CHANNEL, "Socket fd: %i\n", i);
+        dbg(TRANSPORT_CHANNEL, "Socket state: %i\n", socketList[i].state);
+        dbg(TRANSPORT_CHANNEL, "Socket port: %i\n", socketList[i].src);
+        dbg(TRANSPORT_CHANNEL, "Socket dest addr: %i\n",
+            socketList[i].dest.addr);
+        dbg(TRANSPORT_CHANNEL, "Socket dest port: %i\n",
+            socketList[i].dest.port);
 
         // Sender portion
-        dbg(GENERAL_CHANNEL, "Sender portion\n");
-        dbg(GENERAL_CHANNEL, "Socket last written: %i\n",
+        dbg(TRANSPORT_CHANNEL, "Sender portion\n");
+        dbg(TRANSPORT_CHANNEL, "Socket last written: %i\n",
             socketList[i].lastWritten);
-        dbg(GENERAL_CHANNEL, "Socket last ack rcvd: %i\n",
+        dbg(TRANSPORT_CHANNEL, "Socket last ack rcvd: %i\n",
             socketList[i].lastAck);
-        dbg(GENERAL_CHANNEL, "Socket last seq sent: %i\n",
+        dbg(TRANSPORT_CHANNEL, "Socket last seq sent: %i\n",
             socketList[i].lastSent);
 
         // Receiver portion
-        dbg(GENERAL_CHANNEL, "Receiver portion\n");
-        dbg(GENERAL_CHANNEL, "Socket last read: %i\n", socketList[i].lastRead);
-        dbg(GENERAL_CHANNEL, "Socket last seq rcvd: %i\n",
+        dbg(TRANSPORT_CHANNEL, "Receiver portion\n");
+        dbg(TRANSPORT_CHANNEL, "Socket last read: %i\n",
+            socketList[i].lastRead);
+        dbg(TRANSPORT_CHANNEL, "Socket last seq rcvd: %i\n",
             socketList[i].lastRcvd);
-        dbg(GENERAL_CHANNEL, "Socket next expected: %i\n",
+        dbg(TRANSPORT_CHANNEL, "Socket next expected: %i\n",
             socketList[i].nextExpected);
 
-        dbg(GENERAL_CHANNEL, "Socket RTT: %i\n", socketList[i].RTT);
-        dbg(GENERAL_CHANNEL, "Socket adv window: %i\n",
+        dbg(TRANSPORT_CHANNEL, "Socket RTT: %i\n", socketList[i].RTT);
+        dbg(TRANSPORT_CHANNEL, "Socket adv window: %i\n",
             socketList[i].effectiveWindow);
       }
     }
@@ -215,9 +218,7 @@ implementation {
       connectionListIndex[i] = 0;
     }
 
-    initTestListeners();
-
-    call Timer.startOneShot(30000);
+    // call Timer.startOneShot(30000);
   }
 
   /**
@@ -277,6 +278,8 @@ implementation {
     // Set state to Listen to prevent other sockets from binding
     socketList[fd].bound = 1; // bind fd
     socketList[fd].src = addr->port;
+
+    printSockets();
 
     return SUCCESS;
   }
@@ -458,7 +461,7 @@ implementation {
           // specific connection with the same ports and addresses?
 
           // If yes, then the SYN packet is a dupe of some sort
-          dbg(GENERAL_CHANNEL, "dupe syn\n");
+          dbg(TRANSPORT_CHANNEL, "dupe syn\n");
           return FAIL;
         }
       }
@@ -473,7 +476,7 @@ implementation {
       // No matching LISTEN socket with same port, FAIL
       return FAIL;
     }
-    // dbg(GENERAL_CHANNEL, "syn still valid with fd %i\n", fd);
+    // dbg(TRANSPORT_CHANNEL, "syn still valid with fd %i\n", fd);
 
     newConn.srcAddr = srcAddr;
     newConn.srcPort = srcPort;
@@ -484,7 +487,7 @@ implementation {
       // Only push the new connections onto the queue if there is space
       pushBack(fd, newConn);
 
-      signal Transport.newConnectionReceived();
+      signal Transport.newConnectionReceived(fd);
     }
 
     return SUCCESS;
@@ -509,7 +512,7 @@ implementation {
           currSock->lastSent = currSock->lastSent + 1; // increase server seq
           currSock->nextExpected = msg->seq + 1;       // update server ack
           currSock->state = ESTABLISHED;
-          dbg(GENERAL_CHANNEL,
+          dbg(TRANSPORT_CHANNEL,
               "Three way handshake complete, socket %i conn established\n", i);
           printSockets();
 
@@ -582,7 +585,7 @@ implementation {
           currSock->state = ESTABLISHED;
           currSock->lastSent = currSock->lastSent + 1;
 
-          dbg(GENERAL_CHANNEL, "SYN + ACK rcvd\n");
+          dbg(TRANSPORT_CHANNEL, "SYN + ACK rcvd\n");
           printSockets();
 
           // TODO: signal some event that means you can send data
@@ -755,7 +758,7 @@ implementation {
    * @return socket_t - returns SUCCESS if you are able to attempt
    *    a closure with the fd passed, else return FAIL.
    */
-  command error_t Transport.release(socket_t fd) {}
+  command error_t Transport.release(socket_t fd) { return FAIL; }
 
   /**
    * Listen to the socket and wait for a connection.

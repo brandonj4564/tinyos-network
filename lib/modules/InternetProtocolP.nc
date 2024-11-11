@@ -133,5 +133,5 @@ implementation {
     call SimpleSend.send(*msg, nextHop);
   }
 
-  event void Transport.newConnectionReceived() {}
+  event void Transport.newConnectionReceived(socket_t fd) {}
 }

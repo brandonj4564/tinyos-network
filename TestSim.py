@@ -15,7 +15,9 @@ class TestSim:
     CMD_PING = 0
     CMD_NEIGHBOR_DUMP = 1
     CMD_LINKSTATE_DUMP = 2
-    CMD_ROUTE_DUMP=3
+    CMD_ROUTE_DUMP = 3
+    CMD_TEST_CLIENT = 4
+    CMD_TEST_SERVER = 5
 
     # CHANNELS - see includes/channels.h
     COMMAND_CHANNEL="command";
@@ -127,6 +129,12 @@ class TestSim:
     
     def linkstateDMP(self, destination):
         self.sendCMD(self.CMD_LINKSTATE_DUMP, destination, "linkstate command");
+    
+    def cmdTestServer(self, destination, port):
+        self.sendCMD(self.CMD_TEST_SERVER, destination, "{0}".format(chr(port)));
+    
+    def cmdTestClient(self, node, dest, srcPort, destPort, transfer):
+        self.sendCMD(self.CMD_TEST_CLIENT, node, "{0}{1}{2}{3}".format(chr(dest), chr(srcPort), chr(destPort), chr(transfer)));
 
     # Renamed from routeDMP to cmdRouteDMP because it says so in the document
     def cmdRouteDMP(self, destination):
@@ -144,11 +152,13 @@ def main():
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
+    s.runTime(1);
+    s.addChannel(s.TRANSPORT_CHANNEL);
     s.runTime(40);
-
-    # Project 1
-    # s.addChannel(s.NEIGHBOR_CHANNEL);
-    # s.addChannel(s.FLOODING_CHANNEL);
+    s.cmdTestServer(3, 10); # Node 3, port 10 socket listener
+    s.runTime(1);
+    s.cmdTestClient(2, 3, 20, 10, 30);
+    s.runTime(1);
 
     # NeighborDiscovery currently has a timer of about 10s so routes won't be repaired until about 10s passes
 

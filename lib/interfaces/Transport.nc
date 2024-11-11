@@ -41,7 +41,7 @@ interface Transport {
   command error_t bind(socket_t fd, socket_addr_t * addr);
 
   // A new connection request is added to the queue
-  event void newConnectionReceived();
+  event void newConnectionReceived(socket_t fd);
 
   /**
    * Checks to see if there are socket connections to connect to and

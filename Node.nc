@@ -113,13 +113,6 @@ implementation {
     // dbg(GENERAL_CHANNEL, "the neighborlist is updated\n");
   }
 
-  event void Transport.newConnectionReceived() {
-    dbg(GENERAL_CHANNEL, "New connection received!\n");
-    if (TOS_NODE_ID == 2) {
-      call Transport.accept(0);
-    }
-  }
-
   event void CommandHandler.printRouteTable() {
     int numRoutes = call LinkState.getNumActiveRoutes();
     int routes[numRoutes];
@@ -147,9 +140,60 @@ implementation {
 
   event void CommandHandler.printDistanceVector() {}
 
-  event void CommandHandler.setTestServer() {}
+  event void Transport.newConnectionReceived(socket_t fd) {
+    dbg(GENERAL_CHANNEL, "New connection received!\n");
+    call Transport.accept(fd);
+  }
 
-  event void CommandHandler.setTestClient() {}
+  event void CommandHandler.setTestServer(uint8_t port) {
+    // Initiates the server at this node with some port that listens for
+    // connections
+    socket_t fd = call Transport.socket();
+    socket_addr_t addr;
+    error_t outcome;
+    addr.port = port;
+    addr.addr = TOS_NODE_ID;
+    dbg(GENERAL_CHANNEL, "Initializing listener socket with port %u\n", port);
+
+    outcome = call Transport.bind(fd, &addr);
+
+    // I didn't implement the part where it starts a timer to accept connections
+    if (outcome == FAIL) {
+      dbg(GENERAL_CHANNEL, "Something went wrong creating a port...\n");
+    }
+
+    call Transport.listen(fd);
+  }
+
+  event void CommandHandler.setTestClient(uint8_t destAddr, uint8_t srcPort,
+                                          uint8_t destPort, uint8_t transfer) {
+    // TODO: Implement these actually according to the doc
+    socket_t fd = call Transport.socket();
+    socket_addr_t clientAddr;
+    socket_addr_t serverAddr;
+    error_t outcome;
+
+    dbg(GENERAL_CHANNEL, "Initializing client socket with port %u\n", srcPort);
+
+    clientAddr.port = srcPort;
+    clientAddr.addr = TOS_NODE_ID;
+    serverAddr.port = destPort;
+    serverAddr.addr = destAddr;
+
+    outcome = call Transport.bind(fd, &clientAddr);
+    if (outcome == FAIL) {
+      dbg(GENERAL_CHANNEL, "setTestClient binding client socket failed...\n");
+      return;
+    }
+
+    outcome = call Transport.connect(fd, &serverAddr);
+    if (outcome == FAIL) {
+      dbg(GENERAL_CHANNEL, "setTestClient connecting to server failed...\n");
+      return;
+    }
+
+    // TODO: Write all the integers up to transfer
+  }
 
   event void CommandHandler.setAppServer() {}
 
