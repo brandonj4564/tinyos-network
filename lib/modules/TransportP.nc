@@ -335,7 +335,7 @@ implementation {
       uint16_t sizeTCP = sizeof(packTCP);
 
       // initialize the sequence numbers for both client and server
-      boundSocket->lastRcvd = serverISN;
+      boundSocket->lastSent = serverISN;
       boundSocket->nextExpected = clientISN + 1;
 
       /*
@@ -383,27 +383,57 @@ implementation {
     // Called by applications
     socket_store_t *currSock;
     uint16_t trueBuffLen = bufflen;
+    uint8_t lastWritten;
+    uint8_t lastAck;
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return 0;
     }
 
     currSock = &socketList[fd];
+    lastWritten = currSock->lastWritten;
+    lastAck = currSock->lastAck;
 
     if (!(currSock->bound) || currSock->state != ESTABLISHED) {
       // socket has to be bound and already established
       return 0;
     }
 
-    if (currSock->lastWritten + bufflen > SOCKET_BUFFER_SIZE) {
-      // Buffer can't fit everything, have to shorten bufflen
-      trueBuffLen = SOCKET_BUFFER_SIZE - currSock->lastWritten;
+    if (bufflen > 256) {
+      // cap the buff len at the max for 8 bit unsigned ints
+      trueBuffLen = 256;
+    }
+
+    if (lastWritten > lastAck &&
+        lastWritten + trueBuffLen > SOCKET_BUFFER_SIZE) {
+      // Basically, if the end index of the buffer starts out greater than the
+      // start index and writing bufflen causes lastWritten to wrap around the
+      // circular buffer
+      uint8_t wrappedAroundLastWritten = lastWritten + trueBuffLen;
+      if (wrappedAroundLastWritten > lastAck) {
+        // If, even after having wrapped around, the lastWritten ends up greater
+        // than lastAck again, then the buffer doesn't have enough space
+        uint16_t overflow = wrappedAroundLastWritten - lastAck;
+
+        trueBuffLen = trueBuffLen - overflow;
+      }
+    } else if (lastWritten < lastAck && lastWritten + trueBuffLen > lastAck) {
+      // If the end index starts lower than the start (wrap around) but ends up
+      // greater due to overflow
+      uint16_t overflow = lastWritten + trueBuffLen - lastAck;
+      // imagine lastWritten = 2, lastAck = 5, trueBuffLen = 8
+      // overflow = 10 - 5 = 5
+      // trueBuffLen = 8 - 5 = 3
+
+      trueBuffLen = trueBuffLen - overflow;
     }
 
     for (i = 0; i < trueBuffLen; i++) {
-      // Copy buff into the socket buffer starting from lastWritten
-      (currSock->sendBuff)[currSock->lastWritten + i] = buff[i];
+      uint8_t *sendBuff = currSock->sendBuff;
+      sendBuff[lastWritten + i] = buff[i];
     }
+
+    currSock->lastWritten = currSock->lastWritten + trueBuffLen;
     return trueBuffLen;
   }
 
@@ -476,7 +506,7 @@ implementation {
           // if state is SYN_RCVD, then this node is the server and this is the
           // last part of the three way handshake
 
-          currSock->lastRcvd = currSock->lastRcvd + 1; // increase server seq
+          currSock->lastSent = currSock->lastSent + 1; // increase server seq
           currSock->nextExpected = msg->seq + 1;       // update server ack
           currSock->state = ESTABLISHED;
           dbg(GENERAL_CHANNEL,
@@ -551,7 +581,6 @@ implementation {
 
           currSock->state = ESTABLISHED;
           currSock->lastSent = currSock->lastSent + 1;
-          currSock->lastAck = msg->ack;
 
           dbg(GENERAL_CHANNEL, "SYN + ACK rcvd\n");
           printSockets();
@@ -585,7 +614,61 @@ implementation {
    *    from the pass buffer. This may be shorter then bufflen
    */
   command uint16_t Transport.read(socket_t fd, uint8_t * buff,
-                                  uint16_t bufflen) {}
+                                  uint16_t bufflen) {
+    socket_store_t *currSock;
+    uint16_t trueBuffLen = bufflen;
+    uint8_t lastRead;
+    uint8_t lastRcvd;
+    uint16_t i;
+    if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return 0;
+    }
+
+    currSock = &socketList[fd];
+    lastRead = currSock->lastRead;
+    lastRcvd = currSock->lastRcvd;
+
+    if (!(currSock->bound) || currSock->state != ESTABLISHED) {
+      // socket has to be bound and already established
+      return 0;
+    }
+
+    if (bufflen > 256) {
+      // cap the buff len at the max for 8 bit unsigned ints
+      trueBuffLen = 256;
+    }
+
+    if (lastRcvd > lastRead && lastRcvd + trueBuffLen > SOCKET_BUFFER_SIZE) {
+      // Basically, if the end index of the buffer starts out greater than the
+      // start index and writing bufflen causes lastRcvd to wrap around the
+      // circular buffer
+      uint8_t wrappedAroundLastRcvd = lastRcvd + trueBuffLen;
+      if (wrappedAroundLastRcvd > lastRead) {
+        // If, even after having wrapped around, the lastRcvd ends up greater
+        // than lastRead again, then the buffer doesn't have enough space
+        uint16_t overflow = wrappedAroundLastRcvd - lastRead;
+
+        trueBuffLen = trueBuffLen - overflow;
+      }
+    } else if (lastRcvd < lastRead && lastRcvd + trueBuffLen > lastRead) {
+      // If the end index starts lower than the start (wrap around) but ends up
+      // greater due to overflow
+      uint16_t overflow = lastRcvd + trueBuffLen - lastRead;
+      // imagine lastWritten = 2, lastRead = 5, trueBuffLen = 8
+      // overflow = 10 - 5 = 5
+      // trueBuffLen = 8 - 5 = 3
+
+      trueBuffLen = trueBuffLen - overflow;
+    }
+
+    for (i = 0; i < trueBuffLen; i++) {
+      uint8_t *rcvdBuff = currSock->rcvdBuff;
+      buff[i] = rcvdBuff[lastRead + i];
+    }
+
+    currSock->lastRead = currSock->lastRead + trueBuffLen;
+    return trueBuffLen;
+  }
 
   /**
    * Attempts a connection to an address.

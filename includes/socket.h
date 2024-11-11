@@ -40,14 +40,14 @@ typedef struct socket_store_t {
 
   // This is the sender portion.
   uint8_t sendBuff[SOCKET_BUFFER_SIZE];
-  uint8_t lastWritten;
-  uint8_t lastAck;
-  uint8_t lastSent; // this is seq
+  uint8_t lastWritten; // circular buffer, so this is the end index
+  uint8_t lastAck;     // this is the start index of the buffer
+  uint8_t lastSent;    // this is seq for both client and server
 
   // This is the receiver portion
   uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
-  uint8_t lastRead;
-  uint8_t lastRcvd;     // this is actually server's sequence num
+  uint8_t lastRead;     // start index
+  uint8_t lastRcvd;     // end index
   uint8_t nextExpected; // this is the client's seq + 1 (ACK)
 
   uint16_t RTT;
