@@ -17,6 +17,15 @@ enum socket_state {
   SYN_RCVD,
 };
 
+enum socket_flag {
+  // idk what this is actually for
+  UNINIT,       // uninitialized
+  NO_SEND_DATA, // send buffer is empty
+  NO_RCVD_DATA, // rcvd buffer is empty
+  DATA_AVAIL,   // buffers have data
+  BUFFER_FULL,  // buffers are full
+};
+
 typedef nx_uint8_t nx_socket_port_t;
 typedef uint8_t socket_port_t;
 
@@ -32,7 +41,7 @@ typedef uint8_t socket_t;
 
 // State of a socket.
 typedef struct socket_store_t {
-  uint8_t flag;
+  enum socket_flag flag;
   enum socket_state state;
   bool bound;
   socket_port_t src;
@@ -40,6 +49,9 @@ typedef struct socket_store_t {
 
   // This is the sender portion.
   uint8_t sendBuff[SOCKET_BUFFER_SIZE];
+  // Worth noting that the index variables below track the last byte written + 1
+  // and the last ack received + 1. Basically, if lastAck = 5, this means that
+  // index 4 is acknowledged but index 5 is not. It is a little misleading.
   uint8_t lastWritten; // circular buffer, so this is the end index
   uint8_t lastAck;     // this is the start index of the buffer
   uint8_t lastSent;    // this is seq for both client and server

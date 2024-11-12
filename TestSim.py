@@ -154,13 +154,15 @@ def main():
     s.addChannel(s.GENERAL_CHANNEL);
     s.runTime(1);
     s.addChannel(s.TRANSPORT_CHANNEL);
-    s.runTime(40);
+    s.runTime(30);
+    
+    # def cmdTestServer(self, destination, port)
+    # def cmdTestClient(self, node, dest, srcPort, destPort, transfer)
     s.cmdTestServer(3, 10); # Node 3, port 10 socket listener
     s.runTime(1);
-    s.cmdTestClient(2, 3, 20, 10, 30);
+    s.cmdTestClient(2, 3, 20, 10, 30); # 
     s.runTime(1);
 
-    # NeighborDiscovery currently has a timer of about 10s so routes won't be repaired until about 10s passes
 
 
 if __name__ == '__main__':

@@ -46,4 +46,7 @@ implementation {
 
   components TransportC;
   Node.Transport->TransportC;
+
+  components new TimerMilliC() as ClientTimer;
+  Node.ClientTimer->ClientTimer;
 }

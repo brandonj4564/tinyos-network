@@ -29,6 +29,8 @@ implementation {
     nx_uint8_t ack;
     nx_uint8_t flag;
     nx_uint8_t window;
+    nx_uint8_t length; // payload size in bytes, needed to keep track of indices
+                       // in the buffers
     nx_uint8_t payload[0];
   }
   packTCP;
@@ -43,6 +45,7 @@ implementation {
     Package->seq = seq;
     Package->flag = flag;
     Package->window = window;
+    Package->length = length;
     memcpy(Package->payload, payload, length);
   }
 
@@ -194,7 +197,7 @@ implementation {
       // Initialize all sockets as being free and with default values
       socketList[i].state = CLOSED;
       socketList[i].bound = FALSE;
-      socketList[i].flag = 0;
+      socketList[i].flag = UNINIT;
       socketList[i].src = 0;
       socketList[i].dest.port = 0;
       socketList[i].dest.addr = 0;
@@ -329,7 +332,8 @@ implementation {
     // A hack to improve readability by initializing variables later
     if (1) {
       socket_store_t *boundSocket = &(socketList[newSocket]);
-      uint8_t serverISN = call Random.rand16() % 256;
+      // uint8_t serverISN = call Random.rand16() % SOCKET_BUFFER_SIZE;
+      uint8_t serverISN = 0;
       uint8_t clientISN = newConn.seq;
       packTCP msg;
 
@@ -340,6 +344,8 @@ implementation {
       // initialize the sequence numbers for both client and server
       boundSocket->lastSent = serverISN;
       boundSocket->nextExpected = clientISN + 1;
+      boundSocket->lastRead = serverISN;
+      boundSocket->lastRcvd = serverISN;
 
       /*
       void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
@@ -366,6 +372,94 @@ implementation {
     return newSocket;
   }
 
+  // Call this function to send data on a client socket
+  error_t sendData(socket_t fd) {
+    // TODO: track RTT with a timer
+    socket_store_t *currSock;
+    packTCP datagram;
+
+    // subtract both TCP and IP headers
+    uint16_t payloadSizeTCP =
+        PACKET_MAX_PAYLOAD_SIZE - sizeof(packTCP) - sizeof(packIP);
+    uint8_t payloadTCP[payloadSizeTCP];
+    uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+    uint8_t *sendBuff;
+    uint8_t lastSent;
+    uint8_t lastWritten;
+    uint8_t lastAck;
+
+    uint16_t i;
+    if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return FAIL;
+    }
+
+    currSock = &socketList[fd];
+
+    if (!(currSock->bound) || currSock->state != ESTABLISHED ||
+        currSock->flag == NO_SEND_DATA) {
+      // socket has to be bound and already established and have data to send
+      return FAIL;
+    } else if (currSock->lastWritten == currSock->lastAck) {
+      // no data to send yet the flag is not NO_SEND_DATA
+      return FAIL;
+    }
+
+    // Stop and wait, only send one packet at a time
+    // TODO: make sliding window
+
+    lastSent = currSock->lastSent;
+    lastWritten = currSock->lastWritten;
+    lastAck = currSock->lastAck;
+
+    // This if statement is checking if there is enough written data to fill an
+    // entire packet, otherwise fill up the packet enough until lastSent =
+    // lastWritten
+    if (lastSent < lastWritten && lastWritten > lastAck &&
+        lastSent + payloadSizeTCP >= lastWritten) {
+      // Not enough written data to fill payload, limit payloadSizeTCP
+      payloadSizeTCP = lastWritten - lastSent;
+
+    } else if (lastWritten < lastAck) {
+      // Buffer has wrapped around
+      // {||||||lastWritten       lastAck||||||}
+      if (lastSent > lastWritten &&
+          lastSent + payloadSizeTCP >= SOCKET_BUFFER_SIZE &&
+          (lastSent + payloadSizeTCP) % SOCKET_BUFFER_SIZE >= lastWritten) {
+        // lastSent hasn't wrapped around yet, but will exceed lastWritten when
+        // it does wrap
+        payloadSizeTCP = (SOCKET_BUFFER_SIZE - lastSent) + lastWritten;
+      } else if (lastSent < lastWritten &&
+                 lastSent + payloadSizeTCP >= lastWritten) {
+        payloadSizeTCP = lastWritten - lastSent;
+      }
+    }
+
+    sendBuff = currSock->sendBuff;
+    // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
+    for (i = 0; i < payloadSizeTCP; i++) {
+      // Sequence number is the start of the data read
+      payloadTCP[i] = sendBuff[(lastSent + i) % SOCKET_BUFFER_SIZE];
+    }
+
+    /*
+    void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+               uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+               uint8_t window, uint8_t * payload, uint8_t length)
+    */
+    makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, DATA,
+            currSock->nextExpected + payloadSizeTCP, currSock->lastSent, 0,
+            payloadTCP, payloadSizeTCP);
+
+    memcpy(payloadIP, (void *)(&datagram), payloadSizeTCP + sizeof(packTCP));
+
+    call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
+                                      payloadIP,
+                                      payloadSizeTCP + sizeof(packTCP));
+
+    currSock->lastSent = currSock->lastSent + payloadSizeTCP;
+    return SUCCESS;
+  }
+
   /**
    * Write to the socket from a buffer. This data will eventually be
    * transmitted through your TCP implementation.
@@ -388,6 +482,7 @@ implementation {
     uint16_t trueBuffLen = bufflen;
     uint8_t lastWritten;
     uint8_t lastAck;
+    uint8_t *sendBuff;
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return 0;
@@ -402,28 +497,29 @@ implementation {
       return 0;
     }
 
-    if (bufflen > 256) {
-      // cap the buff len at the max for 8 bit unsigned ints
-      trueBuffLen = 256;
+    if (bufflen >= SOCKET_BUFFER_SIZE) {
+      // cap the buff len
+      trueBuffLen = SOCKET_BUFFER_SIZE - 1;
     }
 
-    if (lastWritten > lastAck &&
+    if (lastWritten >= lastAck &&
         lastWritten + trueBuffLen > SOCKET_BUFFER_SIZE) {
       // Basically, if the end index of the buffer starts out greater than the
       // start index and writing bufflen causes lastWritten to wrap around the
       // circular buffer
-      uint8_t wrappedAroundLastWritten = lastWritten + trueBuffLen;
-      if (wrappedAroundLastWritten > lastAck) {
+      uint8_t wrappedAroundLastWritten =
+          (lastWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
+      if (wrappedAroundLastWritten >= lastAck) {
         // If, even after having wrapped around, the lastWritten ends up greater
         // than lastAck again, then the buffer doesn't have enough space
-        uint16_t overflow = wrappedAroundLastWritten - lastAck;
+        uint16_t overflow = wrappedAroundLastWritten - lastAck - 1;
 
         trueBuffLen = trueBuffLen - overflow;
       }
-    } else if (lastWritten < lastAck && lastWritten + trueBuffLen > lastAck) {
+    } else if (lastWritten < lastAck && lastWritten + trueBuffLen >= lastAck) {
       // If the end index starts lower than the start (wrap around) but ends up
       // greater due to overflow
-      uint16_t overflow = lastWritten + trueBuffLen - lastAck;
+      uint16_t overflow = lastWritten + trueBuffLen - lastAck - 1;
       // imagine lastWritten = 2, lastAck = 5, trueBuffLen = 8
       // overflow = 10 - 5 = 5
       // trueBuffLen = 8 - 5 = 3
@@ -431,12 +527,25 @@ implementation {
       trueBuffLen = trueBuffLen - overflow;
     }
 
+    sendBuff = currSock->sendBuff;
     for (i = 0; i < trueBuffLen; i++) {
-      uint8_t *sendBuff = currSock->sendBuff;
-      sendBuff[lastWritten + i] = buff[i];
+      sendBuff[(lastWritten + i) % SOCKET_BUFFER_SIZE] = buff[i];
     }
 
-    currSock->lastWritten = currSock->lastWritten + trueBuffLen;
+    currSock->lastWritten =
+        (currSock->lastWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
+
+    printSockets();
+
+    // No DATA packets are sent until write() is called for the first time
+    // TODO: send some packets now that there is data in the buffer
+    if (currSock->flag == NO_SEND_DATA) {
+      // No send data means ACK has caught up with all data, so as soon as new
+      // data comes in, instantly send it
+      currSock->flag = DATA_AVAIL;
+      sendData(fd);
+    }
+
     return trueBuffLen;
   }
 
@@ -509,9 +618,9 @@ implementation {
           // if state is SYN_RCVD, then this node is the server and this is the
           // last part of the three way handshake
 
-          currSock->lastSent = currSock->lastSent + 1; // increase server seq
-          currSock->nextExpected = msg->seq + 1;       // update server ack
+          currSock->nextExpected = msg->seq;
           currSock->state = ESTABLISHED;
+          currSock->flag = NO_RCVD_DATA;
           dbg(TRANSPORT_CHANNEL,
               "Three way handshake complete, socket %i conn established\n", i);
           printSockets();
@@ -520,6 +629,7 @@ implementation {
 
         } else if (currSock->state == ESTABLISHED) {
           // This code will be executed by the client
+          // TODO
 
         } else {
           // ACK packets should only be received when the state is SYN_RCVD or
@@ -530,6 +640,21 @@ implementation {
     }
 
     return FAIL;
+  }
+
+  error_t handleDATA(packTCP * msg) {
+    int8_t srcAddr = msg->srcAddr;
+    uint8_t srcPort = msg->srcPort;
+    uint8_t destPort = msg->destPort;
+
+    uint16_t i;
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      socket_store_t *currSock = &socketList[i];
+      if (currSock->src == destPort && currSock->dest.port == srcPort &&
+          currSock->dest.addr == srcAddr && currSock->bound &&
+          currSock->state != LISTEN) {
+      }
+    }
   }
 
   /**
@@ -549,6 +674,13 @@ implementation {
       return handleSYN(msg);
     } else if (flag == DATA) {
       // Needed because ACK packets don't carry data in this implementation
+      uint8_t i;
+      dbg(GENERAL_CHANNEL, "DATA packet received\n");
+      for (i = 0; i < msg->length; i++) {
+        dbg(GENERAL_CHANNEL, "%u\n", (msg->payload)[i]);
+      }
+      printSockets();
+
     } else if (flag == FIN) {
       // Close the connection
       // TODO
@@ -572,10 +704,9 @@ implementation {
           uint16_t sizeTCP = sizeof(packTCP);
 
           // Client sends one last ACK packet to server ACKing the server's
-          // ISN
-          // + 1 to complete the three way handshake
+          // ISN to complete the three way handshake
           makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
-                  msg->seq + 1, currSock->lastSent + 1, 0, payloadSYN, 0);
+                  msg->seq, currSock->lastSent, 0, payloadSYN, 0);
 
           memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
 
@@ -583,12 +714,11 @@ implementation {
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
           currSock->state = ESTABLISHED;
-          currSock->lastSent = currSock->lastSent + 1;
+          currSock->flag = NO_SEND_DATA;
+          currSock->nextExpected = msg->seq; // client tracks server's seq
 
-          dbg(TRANSPORT_CHANNEL, "SYN + ACK rcvd\n");
+          signal Transport.connectionSuccess(i);
           printSockets();
-
-          // TODO: signal some event that means you can send data
 
           return SUCCESS;
         }
@@ -622,6 +752,8 @@ implementation {
     uint16_t trueBuffLen = bufflen;
     uint8_t lastRead;
     uint8_t lastRcvd;
+    uint8_t *rcvdBuff;
+
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return 0;
@@ -636,40 +768,40 @@ implementation {
       return 0;
     }
 
-    if (bufflen > 256) {
-      // cap the buff len at the max for 8 bit unsigned ints
-      trueBuffLen = 256;
+    if (bufflen >= SOCKET_BUFFER_SIZE) {
+      // cap the buff len
+      trueBuffLen = SOCKET_BUFFER_SIZE - 1;
     }
 
     if (lastRcvd > lastRead && lastRcvd + trueBuffLen > SOCKET_BUFFER_SIZE) {
-      // Basically, if the end index of the buffer starts out greater than the
-      // start index and writing bufflen causes lastRcvd to wrap around the
-      // circular buffer
-      uint8_t wrappedAroundLastRcvd = lastRcvd + trueBuffLen;
-      if (wrappedAroundLastRcvd > lastRead) {
-        // If, even after having wrapped around, the lastRcvd ends up greater
-        // than lastRead again, then the buffer doesn't have enough space
-        uint16_t overflow = wrappedAroundLastRcvd - lastRead;
+      // Basically, if the end index of the buffer starts out greater than
+      // the start index and writing bufflen causes lastRcvd to wrap around
+      // the circular buffer
+      uint8_t wrappedAroundLastRcvd =
+          (lastRcvd + trueBuffLen) % SOCKET_BUFFER_SIZE;
+      if (wrappedAroundLastRcvd >= lastRead) {
+        // If, even after having wrapped around, the lastRcvd ends up
+        // greater than lastRead again, then the buffer doesn't have enough
+        // space
+        uint16_t overflow = wrappedAroundLastRcvd - lastRead - 1;
 
         trueBuffLen = trueBuffLen - overflow;
       }
-    } else if (lastRcvd < lastRead && lastRcvd + trueBuffLen > lastRead) {
-      // If the end index starts lower than the start (wrap around) but ends up
-      // greater due to overflow
-      uint16_t overflow = lastRcvd + trueBuffLen - lastRead;
-      // imagine lastWritten = 2, lastRead = 5, trueBuffLen = 8
-      // overflow = 10 - 5 = 5
-      // trueBuffLen = 8 - 5 = 3
-
+    } else if (lastRcvd < lastRead && lastRcvd + trueBuffLen >= lastRead) {
+      // If the end index starts lower than the start (wrap around) but ends
+      // up greater due to overflow
+      uint16_t overflow = lastRcvd + trueBuffLen - lastRead - 1;
       trueBuffLen = trueBuffLen - overflow;
     }
 
+    rcvdBuff = currSock->rcvdBuff;
     for (i = 0; i < trueBuffLen; i++) {
-      uint8_t *rcvdBuff = currSock->rcvdBuff;
-      buff[i] = rcvdBuff[lastRead + i];
+      buff[i] = rcvdBuff[(lastRead + i) % SOCKET_BUFFER_SIZE];
     }
 
-    currSock->lastRead = currSock->lastRead + trueBuffLen;
+    currSock->lastRead =
+        (currSock->lastRead + trueBuffLen) % SOCKET_BUFFER_SIZE;
+
     return trueBuffLen;
   }
 
@@ -694,14 +826,15 @@ implementation {
       return FAIL;
 
     } else {
-      // Create a SYN packet with no payload and send it to the dest addr and
-      // port
+      // Create a SYN packet with no payload and send it to the dest addr
+      // and port
       packTCP msg;
       // Given that this is a SYN packet, most fields (like window) don't
       // matter
       uint8_t flag = SYN;
       // Randomize initial sequence number
-      uint8_t initialSeq = call Random.rand16() % 256;
+      // uint8_t initialSeq = call Random.rand16() % SOCKET_BUFFER_SIZE;
+      uint8_t initialSeq = 0;
       uint8_t initialAck = 0;
       uint8_t window = 0;
 
@@ -731,6 +864,8 @@ implementation {
       socket->dest.port = addr->port;
       socket->dest.addr = addr->addr;
       socket->lastSent = initialSeq;
+      socket->lastWritten = initialSeq;
+      socket->lastAck = initialSeq;
 
       socket->state = SYN_SENT;
 

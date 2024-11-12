@@ -43,6 +43,9 @@ interface Transport {
   // A new connection request is added to the queue
   event void newConnectionReceived(socket_t fd);
 
+  // Client side: the connection associated with socket fd is established
+  event void connectionSuccess(socket_t fd);
+
   /**
    * Checks to see if there are socket connections to connect to and
    * if there is one, connect to it.

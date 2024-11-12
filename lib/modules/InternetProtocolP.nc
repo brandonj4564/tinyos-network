@@ -1,3 +1,5 @@
+#include "../../includes/packet.h"
+
 module InternetProtocolP {
   provides interface InternetProtocol;
 
@@ -7,17 +9,6 @@ module InternetProtocolP {
 }
 
 implementation {
-  // LSA pack struct
-  // Only made this because the high level design slides said to
-  typedef nx_struct packIP {
-    nx_uint8_t src;
-    nx_uint8_t dest;
-    nx_uint8_t TTL; // Time to Live
-    nx_uint8_t protocol;
-    nx_uint8_t payload[0];
-  }
-  packIP;
-
   uint16_t sequenceNum = 0;
 
   void makePack(pack * Package, uint8_t src, uint8_t dest, uint8_t TTL,
@@ -134,4 +125,6 @@ implementation {
   }
 
   event void Transport.newConnectionReceived(socket_t fd) {}
+
+  event void Transport.connectionSuccess(socket_t fd) {}
 }

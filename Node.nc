@@ -33,10 +33,12 @@ module Node {
 
   // Project 3
   uses interface Transport;
+  uses interface Timer<TMilli> as ClientTimer;
 }
 
 implementation {
   pack sendPackage;
+  uint8_t transferData; // used for project 3
 
   // Prototypes
   void makePack(pack * Package, uint8_t src, uint8_t dest, uint8_t TTL,
@@ -165,6 +167,24 @@ implementation {
     call Transport.listen(fd);
   }
 
+  event void Transport.connectionSuccess(socket_t fd) {
+    // socket fd's connection to server is a success
+    // time to start writing data
+    uint8_t data[transferData];
+    uint16_t i;
+
+    for (i = 0; i < transferData; i++) {
+      data[i] = (uint8_t)i;
+    }
+
+    dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
+    call Transport.write(fd, data, transferData);
+  }
+
+  event void ClientTimer.fired() {
+    //
+  }
+
   event void CommandHandler.setTestClient(uint8_t destAddr, uint8_t srcPort,
                                           uint8_t destPort, uint8_t transfer) {
     // TODO: Implement these actually according to the doc
@@ -172,6 +192,7 @@ implementation {
     socket_addr_t clientAddr;
     socket_addr_t serverAddr;
     error_t outcome;
+    transferData = transfer;
 
     dbg(GENERAL_CHANNEL, "Initializing client socket with port %u\n", srcPort);
 
