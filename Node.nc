@@ -147,6 +147,20 @@ implementation {
     call Transport.accept(fd);
   }
 
+  event void Transport.dataAvailable(socket_t fd) {
+    uint8_t size = 100;
+    uint8_t data[size];
+    uint8_t actualSize;
+    uint8_t i;
+
+    actualSize = call Transport.read(fd, data, size);
+    dbg(GENERAL_CHANNEL, "Reading %u bytes of data from socket %u.\n",
+        actualSize, fd);
+    for (i = 0; i < actualSize; i++) {
+      dbg(GENERAL_CHANNEL, "%u\n", data[i]);
+    }
+  }
+
   event void CommandHandler.setTestServer(uint8_t port) {
     // Initiates the server at this node with some port that listens for
     // connections

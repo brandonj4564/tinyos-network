@@ -113,6 +113,7 @@ implementation {
         dbg(TRANSPORT_CHANNEL, "-----NEW SOCKET-----\n");
         dbg(TRANSPORT_CHANNEL, "Socket fd: %i\n", i);
         dbg(TRANSPORT_CHANNEL, "Socket state: %i\n", socketList[i].state);
+        dbg(TRANSPORT_CHANNEL, "Socket flag: %i\n", socketList[i].flag);
         dbg(TRANSPORT_CHANNEL, "Socket port: %i\n", socketList[i].src);
         dbg(TRANSPORT_CHANNEL, "Socket dest addr: %i\n",
             socketList[i].dest.addr);
@@ -483,6 +484,7 @@ implementation {
     uint8_t lastWritten;
     uint8_t lastAck;
     uint8_t *sendBuff;
+    uint8_t newFlag = DATA_AVAIL;
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return 0;
@@ -492,14 +494,16 @@ implementation {
     lastWritten = currSock->lastWritten;
     lastAck = currSock->lastAck;
 
-    if (!(currSock->bound) || currSock->state != ESTABLISHED) {
-      // socket has to be bound and already established
+    if (!(currSock->bound) || currSock->state != ESTABLISHED ||
+        currSock->flag == BUFFER_FULL || bufflen == 0) {
+      // socket has to be bound and already established and have room
       return 0;
     }
 
     if (bufflen >= SOCKET_BUFFER_SIZE) {
       // cap the buff len
       trueBuffLen = SOCKET_BUFFER_SIZE - 1;
+      newFlag = BUFFER_FULL;
     }
 
     if (lastWritten >= lastAck &&
@@ -515,6 +519,7 @@ implementation {
         uint16_t overflow = wrappedAroundLastWritten - lastAck - 1;
 
         trueBuffLen = trueBuffLen - overflow;
+        newFlag = BUFFER_FULL;
       }
     } else if (lastWritten < lastAck && lastWritten + trueBuffLen >= lastAck) {
       // If the end index starts lower than the start (wrap around) but ends up
@@ -525,6 +530,7 @@ implementation {
       // trueBuffLen = 8 - 5 = 3
 
       trueBuffLen = trueBuffLen - overflow;
+      newFlag = BUFFER_FULL;
     }
 
     sendBuff = currSock->sendBuff;
@@ -537,14 +543,8 @@ implementation {
 
     printSockets();
 
-    // No DATA packets are sent until write() is called for the first time
-    // TODO: send some packets now that there is data in the buffer
-    if (currSock->flag == NO_SEND_DATA) {
-      // No send data means ACK has caught up with all data, so as soon as new
-      // data comes in, instantly send it
-      currSock->flag = DATA_AVAIL;
-      sendData(fd);
-    }
+    currSock->flag = newFlag;
+    sendData(fd);
 
     return trueBuffLen;
   }
@@ -630,6 +630,8 @@ implementation {
         } else if (currSock->state == ESTABLISHED) {
           // This code will be executed by the client
           // TODO
+          dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD!\n");
+          printSockets();
 
         } else {
           // ACK packets should only be received when the state is SYN_RCVD or
@@ -642,19 +644,87 @@ implementation {
     return FAIL;
   }
 
+  // Called only by the server
   error_t handleDATA(packTCP * msg) {
-    int8_t srcAddr = msg->srcAddr;
+    uint8_t srcAddr = msg->srcAddr;
     uint8_t srcPort = msg->srcPort;
     uint8_t destPort = msg->destPort;
 
     uint16_t i;
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       socket_store_t *currSock = &socketList[i];
+      uint16_t j;
       if (currSock->src == destPort && currSock->dest.port == srcPort &&
           currSock->dest.addr == srcAddr && currSock->bound &&
           currSock->state != LISTEN) {
+
+        packTCP datagram;
+        uint16_t sizeTCP = sizeof(packTCP);
+        uint8_t payloadTCP[0];
+        uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+
+        uint8_t *rcvdBuff = currSock->rcvdBuff;
+        uint8_t msgLength = msg->length;
+        dbg(GENERAL_CHANNEL, "DATA packet received\n");
+
+        if (currSock->lastRcvd >= currSock->lastRead &&
+            currSock->lastRcvd + msgLength > SOCKET_BUFFER_SIZE) {
+
+          uint8_t wrappedAroundLastRcvd =
+              (currSock->lastRcvd + msgLength) % SOCKET_BUFFER_SIZE;
+          if (wrappedAroundLastRcvd >= currSock->lastRead) {
+
+            uint16_t overflow = wrappedAroundLastRcvd - currSock->lastRead - 1;
+
+            msgLength = msgLength - overflow;
+            currSock->flag = BUFFER_FULL;
+          }
+        } else if (currSock->lastRcvd < currSock->lastRead &&
+                   currSock->lastRcvd + msgLength >= currSock->lastRead) {
+
+          uint16_t overflow =
+              currSock->lastRcvd + msgLength - currSock->lastRead - 1;
+          msgLength = msgLength - overflow;
+          currSock->flag = BUFFER_FULL;
+        }
+
+        for (j = 0; j < msgLength; j++) {
+          // TODO: Load packet data into the rcvd buffer lol
+          // dbg(GENERAL_CHANNEL, "%u\n", (msg->payload)[j]);
+          rcvdBuff[(currSock->lastRcvd + j) % SOCKET_BUFFER_SIZE] =
+              (msg->payload)[j];
+        }
+
+        currSock->nextExpected = msg->seq + msgLength;
+        currSock->lastRcvd = currSock->lastRcvd + msgLength;
+        currSock->effectiveWindow = currSock->effectiveWindow - msgLength;
+        if (currSock->flag == NO_RCVD_DATA) {
+          currSock->flag = DATA_AVAIL;
+        }
+        signal Transport.dataAvailable(i);
+
+        /*
+        void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+                  uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+                  uint8_t window, uint8_t * payload, uint8_t length)
+        */
+        makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
+                currSock->nextExpected, currSock->lastSent,
+                currSock->effectiveWindow, payloadTCP, 0);
+
+        // TODO: Is this line below correct?
+        currSock->lastSent = currSock->lastSent + msgLength;
+
+        memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
+
+        call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
+                                          payloadIP, sizeTCP);
+
+        printSockets();
+        return SUCCESS;
       }
     }
+    return FAIL;
   }
 
   /**
@@ -674,12 +744,7 @@ implementation {
       return handleSYN(msg);
     } else if (flag == DATA) {
       // Needed because ACK packets don't carry data in this implementation
-      uint8_t i;
-      dbg(GENERAL_CHANNEL, "DATA packet received\n");
-      for (i = 0; i < msg->length; i++) {
-        dbg(GENERAL_CHANNEL, "%u\n", (msg->payload)[i]);
-      }
-      printSockets();
+      return handleDATA(msg);
 
     } else if (flag == FIN) {
       // Close the connection
@@ -763,35 +828,33 @@ implementation {
     lastRead = currSock->lastRead;
     lastRcvd = currSock->lastRcvd;
 
-    if (!(currSock->bound) || currSock->state != ESTABLISHED) {
-      // socket has to be bound and already established
+    if (!(currSock->bound) || currSock->state != ESTABLISHED ||
+        currSock->flag == NO_RCVD_DATA) {
+      // socket has to be bound and already established and have data
       return 0;
     }
 
     if (bufflen >= SOCKET_BUFFER_SIZE) {
       // cap the buff len
       trueBuffLen = SOCKET_BUFFER_SIZE - 1;
+      currSock->flag = NO_RCVD_DATA;
     }
 
-    if (lastRcvd > lastRead && lastRcvd + trueBuffLen > SOCKET_BUFFER_SIZE) {
-      // Basically, if the end index of the buffer starts out greater than
-      // the start index and writing bufflen causes lastRcvd to wrap around
-      // the circular buffer
-      uint8_t wrappedAroundLastRcvd =
-          (lastRcvd + trueBuffLen) % SOCKET_BUFFER_SIZE;
-      if (wrappedAroundLastRcvd >= lastRead) {
-        // If, even after having wrapped around, the lastRcvd ends up
-        // greater than lastRead again, then the buffer doesn't have enough
-        // space
-        uint16_t overflow = wrappedAroundLastRcvd - lastRead - 1;
+    if (lastRcvd > lastRead && lastRead + trueBuffLen >= lastRcvd) {
 
-        trueBuffLen = trueBuffLen - overflow;
-      }
-    } else if (lastRcvd < lastRead && lastRcvd + trueBuffLen >= lastRead) {
+      uint8_t overflow = lastRead + trueBuffLen - lastRcvd;
+      trueBuffLen = trueBuffLen - overflow;
+      currSock->flag = NO_RCVD_DATA;
+
+    } else if (lastRcvd < lastRead &&
+               lastRead + trueBuffLen >= SOCKET_BUFFER_SIZE &&
+               (lastRead + trueBuffLen) % SOCKET_BUFFER_SIZE >= lastRcvd) {
       // If the end index starts lower than the start (wrap around) but ends
       // up greater due to overflow
-      uint16_t overflow = lastRcvd + trueBuffLen - lastRead - 1;
+      uint16_t overflow =
+          ((lastRead + trueBuffLen) % SOCKET_BUFFER_SIZE) - lastRcvd;
       trueBuffLen = trueBuffLen - overflow;
+      currSock->flag = NO_RCVD_DATA;
     }
 
     rcvdBuff = currSock->rcvdBuff;

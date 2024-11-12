@@ -155,12 +155,12 @@ def main():
     s.runTime(1);
     s.addChannel(s.TRANSPORT_CHANNEL);
     s.runTime(30);
-    
+
     # def cmdTestServer(self, destination, port)
     # def cmdTestClient(self, node, dest, srcPort, destPort, transfer)
     s.cmdTestServer(3, 10); # Node 3, port 10 socket listener
     s.runTime(1);
-    s.cmdTestClient(2, 3, 20, 10, 30); # 
+    s.cmdTestClient(2, 3, 20, 10, 255); # 
     s.runTime(1);
 
 

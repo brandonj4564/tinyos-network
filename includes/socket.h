@@ -19,11 +19,11 @@ enum socket_state {
 
 enum socket_flag {
   // idk what this is actually for
-  UNINIT,       // uninitialized
-  NO_SEND_DATA, // send buffer is empty
-  NO_RCVD_DATA, // rcvd buffer is empty
-  DATA_AVAIL,   // buffers have data
-  BUFFER_FULL,  // buffers are full
+  UNINIT = 0,       // uninitialized
+  NO_SEND_DATA = 1, // send buffer is empty
+  NO_RCVD_DATA = 2, // rcvd buffer is empty
+  DATA_AVAIL = 3,   // buffers have data
+  BUFFER_FULL = 4,  // buffers are full
 };
 
 typedef nx_uint8_t nx_socket_port_t;

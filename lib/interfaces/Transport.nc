@@ -46,6 +46,9 @@ interface Transport {
   // Client side: the connection associated with socket fd is established
   event void connectionSuccess(socket_t fd);
 
+  // Server side: data has arrived from the client and can be read
+  event void dataAvailable(socket_t fd);
+
   /**
    * Checks to see if there are socket connections to connect to and
    * if there is one, connect to it.

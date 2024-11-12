@@ -127,4 +127,6 @@ implementation {
   event void Transport.newConnectionReceived(socket_t fd) {}
 
   event void Transport.connectionSuccess(socket_t fd) {}
+
+  event void Transport.dataAvailable(socket_t fd) {}
 }
