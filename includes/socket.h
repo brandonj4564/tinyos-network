@@ -15,7 +15,7 @@ enum socket_state {
   ESTABLISHED,
   SYN_SENT,
   SYN_RCVD,
-  FIN_SENT,
+  INIT_FIN,
   FIN_WAIT_2,
   TIME_WAIT,
   CLOSE_WAIT,
@@ -28,6 +28,7 @@ enum socket_flag {
   NO_RCVD_DATA = 2, // rcvd buffer is empty
   DATA_AVAIL = 3,   // buffers have data
   BUFFER_FULL = 4,  // buffers are full
+  FIN_SENT = 5,      //FINs are being sent
 };
 
 typedef nx_uint8_t nx_socket_port_t;

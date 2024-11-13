@@ -7,6 +7,7 @@ module TransportP {
   uses interface Boot;
   uses interface InternetProtocol;
   uses interface Timer<TMilli> as CloseClient;
+  uses interface Timer<TMilli> as WaitClose;
   uses interface Random;
 }
 
@@ -647,7 +648,14 @@ implementation {
           printSockets();
           return SUCCESS;
 
-        } else {
+        } else if(currSock->state == INIT_FIN){
+          currSock->state = FIN_WAIT_2;
+          //wait for FIN to arrive from other node(server)
+        } else if(currSock->state == CLOSE_WAIT){
+          //TImer before going to closed state
+          call WaitClose.startPeriodic(7000);
+        }
+        else {
           // ACK packets should only be received when the state is SYN_RCVD or
           // ESTABLISHED
           return FAIL;
@@ -774,7 +782,7 @@ implementation {
         if (currSock->src == msg->destPort &&
             currSock->dest.port == msg->srcPort &&
             currSock->dest.addr == msg->srcAddr && currSock->bound &&
-            currSock->state == FIN_SENT) {
+            currSock->flag == FIN_SENT && currSock->state == INIT_FIN) {
 
           packTCP msgAck;
           uint8_t payloadSYN[0];
@@ -790,23 +798,43 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
-          currSock->state = CLOSE_WAIT;
-          currSock->flag = NO_SEND_DATA;
+          currSock->state = CLOSE_WAIT; // sets receiver node to wait for all data to be sent out
+          // currSock->flag = NO_SEND_DATA; 
           currSock->nextExpected = msg->seq; // client tracks server's seq
 
           signal Transport.connectionSuccess(i);
           // printSockets();
-
+          //send out all data -- I don't know how
+          //when all data is sent call close function
           call Transport.close(i);
 
           return SUCCESS;
+          //simplfy if statements later
         } else if (currSock->src == msg->destPort &&
                    currSock->dest.port == msg->srcPort &&
                    currSock->dest.addr == msg->srcAddr && currSock->bound &&
-                   currSock->state == FIN_WAIT_2) {
-          // Set state to FIN_WAIT
+                   currSock->flag == FIN_SENT && currSock->state == FIN_WAIT_2) {
+
+          //send ACK (Client to Server) telling them to close 
+          packTCP msgAck;
+          uint8_t payloadSYN[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          uint16_t sizeTCP = sizeof(packTCP);
+          // Set state to TIME_WAIT
           // Have timer until setting state to CLOSED
-          currSock->state = FIN_WAIT;
+          currSock->state = TIME_WAIT;
+
+          // Server sends ACK to continue with teardown
+          makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
+                  msg->seq, currSock->lastSent, 0, payloadSYN, 0);
+
+          memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
+
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
+
+          //Set state to CLOSED after timer.
+          call WaitClose.startPeriodic(7000);
           return SUCCESS;
         }
       }
@@ -1008,6 +1036,34 @@ implementation {
     // If no, send FIN message. If yes, start timer again
   }
 
+  event void WaitClose.fired() {
+    uint16_t i;
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      socket_store_t *currSock = &(socketList[i]);
+      // !!!!! Not sure how to set current socket !!!!!!!!!!!!
+      // Will not run as expected
+      // Waits for a while before setting the socket to close.
+      currSock->state = CLOSED;
+      currSock->bound = FALSE;
+      currSock->flag = UNINIT;
+      currSock->src = 0;
+      currSock->dest.port = 0;
+      currSock->dest.addr = 0;
+
+      currSock->lastWritten = 0;
+      currSock->lastAck = 0;
+      currSock->lastSent = 0;
+      currSock->lastRead = 0;
+      currSock->lastRcvd = 0;
+      currSock->nextExpected = 0;
+
+      currSock->RTT = 0;
+      currSock->effectiveWindow = SOCKET_BUFFER_SIZE;
+
+      memset(currSock->sendBuff, 0, SOCKET_BUFFER_SIZE);
+      memset(currSock->rcvdBuff, 0, SOCKET_BUFFER_SIZE);
+    }
+  }
   /**
    * Closes the socket.
    * @param
@@ -1039,19 +1095,40 @@ implementation {
       // If there is still data in the buffers, can't close
       return FAIL;
     }
-    currSock->state = FIN_SENT;
-    /*
-    void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
-               uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
-               uint8_t window, uint8_t * payload, uint8_t length)
-    */
-    makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, FIN,
-            currSock->nextExpected, currSock->lastSent, 0, payloadTCP, 0);
+    // If flag Doesnot equal any state then it is initial
+    //!!! Potentially change later because if it is any other state it will close)
+    if(currSock->state != CLOSE_WAIT){
+      currSock->flag = FIN_SENT; //sets state before sending?
+      currSock->state = INIT_FIN;
+      /*
+      void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+                uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+                uint8_t window, uint8_t * payload, uint8_t length)
+      */
+      makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, FIN,
+              currSock->nextExpected, currSock->lastSent, 0, payloadTCP, 0);
 
-    memcpy(payloadIP, (void *)(&datagram), sizeTCP);
+      memcpy(payloadIP, (void *)(&datagram), sizeTCP);
 
-    call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
-                                      payloadIP, sizeTCP);
+      call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
+                                        payloadIP, sizeTCP);
+    } else{
+      //Send all data out and then send 
+      currSock->flag = FIN_SENT; //sets state before sending?
+      /*
+      void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+                uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+                uint8_t window, uint8_t * payload, uint8_t length)
+      */
+      makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, FIN,
+              currSock->nextExpected, currSock->lastSent, 0, payloadTCP, 0);
+
+      memcpy(payloadIP, (void *)(&datagram), sizeTCP);
+
+      call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
+                                        payloadIP, sizeTCP);
+    }
+
     // Reset all values of the socket
     // currSock->state = CLOSED;
     // currSock->bound = FALSE;
