@@ -6,11 +6,11 @@ implementation {
 
   components MainC;
   components InternetProtocolC;
-  components new TimerMilliC() as Timer;
+  components new TimerMilliC() as CloseClient;
   components RandomC as Random;
 
   TransportP->MainC.Boot;
   TransportP.InternetProtocol->InternetProtocolC;
-  TransportP.Timer->Timer;
+  TransportP.CloseClient->CloseClient;
   TransportP.Random->Random;
 }

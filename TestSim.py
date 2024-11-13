@@ -161,7 +161,7 @@ def main():
     s.cmdTestServer(3, 10); # Node 3, port 10 socket listener
     s.runTime(1);
     s.cmdTestClient(2, 3, 20, 10, 255); # 
-    s.runTime(1);
+    s.runTime(20);
 
 
 

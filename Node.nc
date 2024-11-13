@@ -38,7 +38,10 @@ module Node {
 
 implementation {
   pack sendPackage;
-  uint8_t transferData; // used for project 3
+
+  // used for project 3
+  uint8_t transferData;
+  uint16_t dataSent;
 
   // Prototypes
   void makePack(pack * Package, uint8_t src, uint8_t dest, uint8_t TTL,
@@ -192,7 +195,22 @@ implementation {
     }
 
     dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
-    call Transport.write(fd, data, transferData);
+    dataSent = call Transport.write(fd, data, transferData);
+  }
+
+  event void Transport.bufferFreed(socket_t fd) {
+    if (dataSent < transferData) {
+      uint8_t data[transferData - dataSent];
+      uint16_t i;
+
+      for (i = 0; i < transferData - dataSent; i++) {
+        data[i] = (uint8_t)(i + dataSent);
+      }
+      dbg(GENERAL_CHANNEL, "Socket %u has more space in sendBuffer.\n", fd);
+
+      dataSent =
+          dataSent + call Transport.write(fd, data, transferData - dataSent);
+    }
   }
 
   event void ClientTimer.fired() {

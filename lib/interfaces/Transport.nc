@@ -49,6 +49,9 @@ interface Transport {
   // Server side: data has arrived from the client and can be read
   event void dataAvailable(socket_t fd);
 
+  // Client side: sendBuffer has some more space
+  event void bufferFreed(socket_t fd);
+
   /**
    * Checks to see if there are socket connections to connect to and
    * if there is one, connect to it.
