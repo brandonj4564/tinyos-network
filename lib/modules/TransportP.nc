@@ -767,17 +767,54 @@ implementation {
       // Close the connection
       // TODO
       // Send ACK to sender
-      // packTCP msgAck;
+      uint16_t i;
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &(socketList[i]);
 
+        if (currSock->src == msg->destPort &&
+            currSock->dest.port == msg->srcPort &&
+            currSock->dest.addr == msg->srcAddr && currSock->bound &&
+            currSock->state == FIN_SENT) {
+
+          packTCP msgAck;
+          uint8_t payloadSYN[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          uint16_t sizeTCP = sizeof(packTCP);
+
+          // Server sends ACK to continue with teardown
+          makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
+                  msg->seq, currSock->lastSent, 0, payloadSYN, 0);
+
+          memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
+
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
+
+          currSock->state = CLOSE_WAIT;
+          currSock->flag = NO_SEND_DATA;
+          currSock->nextExpected = msg->seq; // client tracks server's seq
+
+          signal Transport.connectionSuccess(i);
+          // printSockets();
+
+          call Transport.close(i);
+
+          return SUCCESS;
+        } else if (currSock->src == msg->destPort &&
+                   currSock->dest.port == msg->srcPort &&
+                   currSock->dest.addr == msg->srcAddr && currSock->bound &&
+                   currSock->state == FIN_WAIT_2) {
+          // Set state to FIN_WAIT
+          // Have timer until setting state to CLOSED
+          currSock->state = FIN_WAIT;
+          return SUCCESS;
+        }
+      }
       /*
       void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
                   uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
                   uint8_t window, uint8_t * payload, uint8_t length)
       */
-
-      // void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
-      //           uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
-      //           uint8_t window, uint8_t * payload, uint8_t length);
 
     } else if (flag == ACK) {
       return handleACK(msg);
@@ -1002,7 +1039,7 @@ implementation {
       // If there is still data in the buffers, can't close
       return FAIL;
     }
-
+    currSock->state = FIN_SENT;
     /*
     void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
                uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
@@ -1015,27 +1052,26 @@ implementation {
 
     call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
                                       payloadIP, sizeTCP);
-
     // Reset all values of the socket
-    currSock->state = CLOSED;
-    currSock->bound = FALSE;
-    currSock->flag = UNINIT;
-    currSock->src = 0;
-    currSock->dest.port = 0;
-    currSock->dest.addr = 0;
+    // currSock->state = CLOSED;
+    // currSock->bound = FALSE;
+    // currSock->flag = UNINIT;
+    // currSock->src = 0;
+    // currSock->dest.port = 0;
+    // currSock->dest.addr = 0;
 
-    currSock->lastWritten = 0;
-    currSock->lastAck = 0;
-    currSock->lastSent = 0;
-    currSock->lastRead = 0;
-    currSock->lastRcvd = 0;
-    currSock->nextExpected = 0;
+    // currSock->lastWritten = 0;
+    // currSock->lastAck = 0;
+    // currSock->lastSent = 0;
+    // currSock->lastRead = 0;
+    // currSock->lastRcvd = 0;
+    // currSock->nextExpected = 0;
 
-    currSock->RTT = 0;
-    currSock->effectiveWindow = SOCKET_BUFFER_SIZE;
+    // currSock->RTT = 0;
+    // currSock->effectiveWindow = SOCKET_BUFFER_SIZE;
 
-    memset(currSock->sendBuff, 0, SOCKET_BUFFER_SIZE);
-    memset(currSock->rcvdBuff, 0, SOCKET_BUFFER_SIZE);
+    // memset(currSock->sendBuff, 0, SOCKET_BUFFER_SIZE);
+    // memset(currSock->rcvdBuff, 0, SOCKET_BUFFER_SIZE);
 
     return SUCCESS;
   }
