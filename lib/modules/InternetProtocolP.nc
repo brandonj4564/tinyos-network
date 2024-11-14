@@ -63,7 +63,7 @@ implementation {
              normalPayload, sizeIP);
     sequenceNum++;
 
-    dbg(GENERAL_CHANNEL, "IP: Forwarding message to %i.\n", nextHop);
+    // dbg(GENERAL_CHANNEL, "IP: Forwarding message to %i.\n", nextHop);
     call SimpleSend.send(message, nextHop);
   }
 
@@ -79,8 +79,8 @@ implementation {
 
     if (dest == TOS_NODE_ID) {
       // Message reached destination
-      dbg(GENERAL_CHANNEL, "IP: FINALLY REACHED DESTINATION, SENT FROM %i\n",
-          src);
+      // dbg(GENERAL_CHANNEL, "IP: FINALLY REACHED DESTINATION, SENT FROM %i\n",
+      //     src);
 
       // Send a ping reply
       if (datagram->protocol == PROTOCOL_PING) {
@@ -120,7 +120,7 @@ implementation {
       return;
     }
 
-    dbg(GENERAL_CHANNEL, "IP: Forwarding message to %i.\n", nextHop);
+    // dbg(GENERAL_CHANNEL, "IP: Forwarding message to %i.\n", nextHop);
     call SimpleSend.send(*msg, nextHop);
   }
 
@@ -131,4 +131,6 @@ implementation {
   event void Transport.dataAvailable(socket_t fd) {}
 
   event void Transport.bufferFreed(socket_t fd) {}
+
+  event void Transport.alertClose(socket_t fd) {}
 }

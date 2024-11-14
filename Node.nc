@@ -42,6 +42,7 @@ implementation {
   // used for project 3
   uint8_t transferData;
   uint16_t dataSent;
+  socket_t currSock;
 
   // Prototypes
   void makePack(pack * Package, uint8_t src, uint8_t dest, uint8_t TTL,
@@ -196,6 +197,8 @@ implementation {
 
     dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
     dataSent = call Transport.write(fd, data, transferData);
+
+    // call Transport.close(fd); // instantly close without transferring data
   }
 
   event void Transport.bufferFreed(socket_t fd) {
@@ -210,11 +213,45 @@ implementation {
 
       dataSent =
           dataSent + call Transport.write(fd, data, transferData - dataSent);
+
+      if (transferData - dataSent <= 0) {
+        // No more data to be sent, close the connection
+        error_t outcome = call Transport.close(fd);
+        dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
+
+        if (outcome == FAIL) {
+          // Still data left, set a timer
+          call ClientTimer.startOneShot(500);
+          currSock = fd;
+        }
+      }
+    }
+  }
+
+  event void Transport.alertClose(socket_t fd) {
+    error_t outcome = call Transport.close(fd);
+    currSock = fd;
+
+    if (outcome == FAIL) {
+      // Still data left, set a timer
+      dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", currSock);
+      call ClientTimer.startOneShot(500);
+    } else if (outcome == SUCCESS) {
+      dbg(GENERAL_CHANNEL, "Successfully called close() on socket %u!\n",
+          currSock);
     }
   }
 
   event void ClientTimer.fired() {
-    //
+    error_t outcome = call Transport.close(currSock);
+    if (outcome == FAIL) {
+      // Still data left, set a timer
+      dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", currSock);
+      call ClientTimer.startOneShot(500);
+    } else if (outcome == SUCCESS) {
+      dbg(GENERAL_CHANNEL, "Successfully called close() on socket %u!\n",
+          currSock);
+    }
   }
 
   event void CommandHandler.setTestClient(uint8_t destAddr, uint8_t srcPort,
@@ -244,8 +281,6 @@ implementation {
       dbg(GENERAL_CHANNEL, "setTestClient connecting to server failed...\n");
       return;
     }
-
-    // TODO: Write all the integers up to transfer
   }
 
   event void CommandHandler.setAppServer() {}

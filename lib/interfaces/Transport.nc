@@ -52,6 +52,9 @@ interface Transport {
   // Client side: sendBuffer has some more space
   event void bufferFreed(socket_t fd);
 
+  // Will be called by the recipient of the initial FIN packet to call close()
+  event void alertClose(socket_t fd);
+
   /**
    * Checks to see if there are socket connections to connect to and
    * if there is one, connect to it.
