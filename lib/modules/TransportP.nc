@@ -9,6 +9,7 @@ module TransportP {
   uses interface Timer<TMilli> as CloseClient;
   uses interface Timer<TMilli> as WaitClose;
   uses interface Random;
+  uses interface List<socket_t> as ClosingQueue;
 }
 
 implementation {
@@ -57,8 +58,9 @@ implementation {
   // The current socket being closed
   // I'm aware that this causes problems if multiple sockets close at once, but
   // such is the nature of not being able to pass args into timers
-  uint8_t closingSock = 0;
+  uint8_t closingSock = 0;               // TODO: Turn this into a List
   const uint16_t CLOSE_WAIT_TIME = 5000; // ms
+  bool currentlyClosing = FALSE; // This checks if the timer is currently in use
 
   // A FIFO queue for each potential socket
   connection_t connectionList[MAX_NUM_OF_SOCKETS][MAX_CONNECTIONS];
@@ -130,19 +132,19 @@ implementation {
 
         // Sender portion
         dbg(TRANSPORT_CHANNEL, "Sender portion\n");
-        dbg(TRANSPORT_CHANNEL, "Socket last written: %i\n",
-            socketList[i].lastWritten);
-        dbg(TRANSPORT_CHANNEL, "Socket last ack rcvd: %i\n",
-            socketList[i].lastAck);
-        dbg(TRANSPORT_CHANNEL, "Socket last seq sent: %i\n",
-            socketList[i].lastSent);
+        dbg(TRANSPORT_CHANNEL, "Socket next written: %i\n",
+            socketList[i].nextWritten);
+        dbg(TRANSPORT_CHANNEL, "Socket next ack rcvd: %i\n",
+            socketList[i].nextAck);
+        dbg(TRANSPORT_CHANNEL, "Socket next seq sent: %i\n",
+            socketList[i].nextSend);
 
         // Receiver portion
         dbg(TRANSPORT_CHANNEL, "Receiver portion\n");
-        dbg(TRANSPORT_CHANNEL, "Socket last read: %i\n",
-            socketList[i].lastRead);
-        dbg(TRANSPORT_CHANNEL, "Socket last seq rcvd: %i\n",
-            socketList[i].lastRcvd);
+        dbg(TRANSPORT_CHANNEL, "Socket next read: %i\n",
+            socketList[i].nextRead);
+        dbg(TRANSPORT_CHANNEL, "Socket next seq rcvd: %i\n",
+            socketList[i].nextRcvd);
         dbg(TRANSPORT_CHANNEL, "Socket next expected: %i\n",
             socketList[i].nextExpected);
 
@@ -194,11 +196,11 @@ implementation {
       socketList[i].dest.addr = 0;
 
       // Initialize buffer pointers and counters
-      socketList[i].lastWritten = 0;
-      socketList[i].lastAck = 0;
-      socketList[i].lastSent = 0;
-      socketList[i].lastRead = 0;
-      socketList[i].lastRcvd = 0;
+      socketList[i].nextWritten = 0;
+      socketList[i].nextAck = 0;
+      socketList[i].nextSend = 0;
+      socketList[i].nextRead = 0;
+      socketList[i].nextRcvd = 0;
       socketList[i].nextExpected = 0;
 
       // Set RTT and window values to 0 or default
@@ -331,10 +333,10 @@ implementation {
       uint16_t sizeTCP = sizeof(packTCP);
 
       // initialize the sequence numbers for both client and server
-      boundSocket->lastSent = serverISN;
+      boundSocket->nextSend = serverISN;
       boundSocket->nextExpected = clientISN + 1;
-      boundSocket->lastRead = serverISN;
-      boundSocket->lastRcvd = serverISN;
+      boundSocket->nextRead = serverISN;
+      boundSocket->nextRcvd = serverISN;
 
       /*
       void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
@@ -373,9 +375,9 @@ implementation {
     uint8_t payloadTCP[payloadSizeTCP];
     uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
     uint8_t *sendBuff;
-    uint8_t lastSent;
-    uint8_t lastWritten;
-    uint8_t lastAck;
+    uint8_t nextSend;
+    uint8_t nextWritten;
+    uint8_t nextAck;
 
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
@@ -388,7 +390,7 @@ implementation {
         currSock->flag == NO_SEND_DATA) {
       // socket has to be bound and already established and have data to send
       return FAIL;
-    } else if (currSock->lastWritten == currSock->lastAck) {
+    } else if (currSock->nextWritten == currSock->nextAck) {
       // no data to send yet the flag is not NO_SEND_DATA
       return FAIL;
     }
@@ -396,30 +398,30 @@ implementation {
     // Stop and wait, only send one packet at a time
     // TODO: make sliding window
 
-    lastSent = currSock->lastSent;
-    lastWritten = currSock->lastWritten;
-    lastAck = currSock->lastAck;
+    nextSend = currSock->nextSend;
+    nextWritten = currSock->nextWritten;
+    nextAck = currSock->nextAck;
 
     // This if statement is checking if there is enough written data to fill an
-    // entire packet, otherwise fill up the packet enough until lastSent =
-    // lastWritten
-    if (lastSent < lastWritten && lastWritten > lastAck &&
-        lastSent + payloadSizeTCP >= lastWritten) {
+    // entire packet, otherwise fill up the packet enough until nextSend =
+    // nextWritten
+    if (nextSend < nextWritten && nextWritten > nextAck &&
+        nextSend + payloadSizeTCP >= nextWritten) {
       // Not enough written data to fill payload, limit payloadSizeTCP
-      payloadSizeTCP = lastWritten - lastSent;
+      payloadSizeTCP = nextWritten - nextSend;
 
-    } else if (lastWritten < lastAck) {
+    } else if (nextWritten < nextAck) {
       // Buffer has wrapped around
-      // {||||||lastWritten       lastAck||||||}
-      if (lastSent > lastWritten &&
-          lastSent + payloadSizeTCP >= SOCKET_BUFFER_SIZE &&
-          (lastSent + payloadSizeTCP) % SOCKET_BUFFER_SIZE >= lastWritten) {
-        // lastSent hasn't wrapped around yet, but will exceed lastWritten when
+      // {||||||nextWritten       nextAck||||||}
+      if (nextSend > nextWritten &&
+          nextSend + payloadSizeTCP >= SOCKET_BUFFER_SIZE &&
+          (nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE >= nextWritten) {
+        // nextSend hasn't wrapped around yet, but will exceed nextWritten when
         // it does wrap
-        payloadSizeTCP = (SOCKET_BUFFER_SIZE - lastSent) + lastWritten;
-      } else if (lastSent < lastWritten &&
-                 lastSent + payloadSizeTCP >= lastWritten) {
-        payloadSizeTCP = lastWritten - lastSent;
+        payloadSizeTCP = (SOCKET_BUFFER_SIZE - nextSend) + nextWritten;
+      } else if (nextSend < nextWritten &&
+                 nextSend + payloadSizeTCP >= nextWritten) {
+        payloadSizeTCP = nextWritten - nextSend;
       }
     }
 
@@ -427,7 +429,7 @@ implementation {
     // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
     for (i = 0; i < payloadSizeTCP; i++) {
       // Sequence number is the start of the data read
-      payloadTCP[i] = sendBuff[(lastSent + i) % SOCKET_BUFFER_SIZE];
+      payloadTCP[i] = sendBuff[(nextSend + i) % SOCKET_BUFFER_SIZE];
     }
 
     /*
@@ -436,7 +438,7 @@ implementation {
                uint8_t window, uint8_t * payload, uint8_t length)
     */
     makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, DATA,
-            currSock->nextExpected + payloadSizeTCP, currSock->lastSent, 0,
+            currSock->nextExpected + payloadSizeTCP, currSock->nextSend, 0,
             payloadTCP, payloadSizeTCP);
 
     memcpy(payloadIP, (void *)(&datagram), payloadSizeTCP + sizeof(packTCP));
@@ -445,8 +447,8 @@ implementation {
                                       payloadIP,
                                       payloadSizeTCP + sizeof(packTCP));
 
-    currSock->lastSent =
-        (currSock->lastSent + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
+    currSock->nextSend =
+        (currSock->nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
     return SUCCESS;
   }
 
@@ -470,8 +472,8 @@ implementation {
     // Called by applications
     socket_store_t *currSock;
     uint16_t trueBuffLen = bufflen;
-    uint8_t lastWritten;
-    uint8_t lastAck;
+    uint8_t nextWritten;
+    uint8_t nextAck;
     uint8_t *sendBuff;
     uint8_t newFlag = DATA_AVAIL;
     uint16_t i;
@@ -480,8 +482,8 @@ implementation {
     }
 
     currSock = &socketList[fd];
-    lastWritten = currSock->lastWritten;
-    lastAck = currSock->lastAck;
+    nextWritten = currSock->nextWritten;
+    nextAck = currSock->nextAck;
 
     if (!(currSock->bound) || currSock->state != ESTABLISHED ||
         currSock->flag == BUFFER_FULL || bufflen == 0) {
@@ -496,29 +498,29 @@ implementation {
     }
 
     // dbg(GENERAL_CHANNEL, "trueBuffLen before if: %u\n", trueBuffLen);
-    // dbg(GENERAL_CHANNEL, "lastWritten: %u\n", lastWritten);
-    // dbg(GENERAL_CHANNEL, "lastAck: %u\n", lastAck);
+    // dbg(GENERAL_CHANNEL, "nextWritten: %u\n", nextWritten);
+    // dbg(GENERAL_CHANNEL, "nextAck: %u\n", nextAck);
 
-    if (lastWritten >= lastAck &&
-        lastWritten + trueBuffLen > SOCKET_BUFFER_SIZE) {
+    if (nextWritten >= nextAck &&
+        nextWritten + trueBuffLen > SOCKET_BUFFER_SIZE) {
       // Basically, if the end index of the buffer starts out greater than the
-      // start index and writing bufflen causes lastWritten to wrap around the
+      // start index and writing bufflen causes nextWritten to wrap around the
       // circular buffer
-      uint8_t wrappedAroundLastWritten =
-          (lastWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
-      if (wrappedAroundLastWritten >= lastAck) {
-        // If, even after having wrapped around, the lastWritten ends up greater
-        // than lastAck again, then the buffer doesn't have enough space
-        uint16_t overflow = wrappedAroundLastWritten - lastAck + 1;
+      uint8_t wrappedAroundnextWritten =
+          (nextWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
+      if (wrappedAroundnextWritten >= nextAck) {
+        // If, even after having wrapped around, the nextWritten ends up greater
+        // than nextAck again, then the buffer doesn't have enough space
+        uint16_t overflow = wrappedAroundnextWritten - nextAck + 1;
 
         trueBuffLen = trueBuffLen - overflow;
         newFlag = BUFFER_FULL;
       }
-    } else if (lastWritten < lastAck && lastWritten + trueBuffLen >= lastAck) {
+    } else if (nextWritten < nextAck && nextWritten + trueBuffLen >= nextAck) {
       // If the end index starts lower than the start (wrap around) but ends up
       // greater due to overflow
-      uint16_t overflow = lastWritten + trueBuffLen - lastAck + 1;
-      // imagine lastWritten = 2, lastAck = 5, trueBuffLen = 8
+      uint16_t overflow = nextWritten + trueBuffLen - nextAck + 1;
+      // imagine nextWritten = 2, nextAck = 5, trueBuffLen = 8
       // overflow = 10 - 5 = 5
       // trueBuffLen = 8 - 5 = 3
 
@@ -529,11 +531,11 @@ implementation {
 
     sendBuff = currSock->sendBuff;
     for (i = 0; i < trueBuffLen; i++) {
-      sendBuff[(lastWritten + i) % SOCKET_BUFFER_SIZE] = buff[i];
+      sendBuff[(nextWritten + i) % SOCKET_BUFFER_SIZE] = buff[i];
     }
 
-    currSock->lastWritten =
-        (currSock->lastWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
+    currSock->nextWritten =
+        (currSock->nextWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
 
     printSockets();
     if (currSock->flag == NO_SEND_DATA) {
@@ -630,8 +632,8 @@ implementation {
           // uint8_t numAckedBytes = msg->length;
 
           // Check if ackSeq is what we expect
-          // ackSeq must be equal to lastSent to count that packet as acked
-          if (ackSeq != currSock->lastSent) {
+          // ackSeq must be equal to nextSend to count that packet as acked
+          if (ackSeq != currSock->nextSend) {
             // This ack must be out of order or lost, either way it doesn't
             // match
             dbg(GENERAL_CHANNEL, "Invalid ACK number: %u\n", ackSeq);
@@ -639,10 +641,10 @@ implementation {
           }
 
           dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
-          // update lastAck, free up space in the sendBuffer
-          currSock->lastAck = ackSeq;
+          // update nextAck, free up space in the sendBuffer
+          currSock->nextAck = ackSeq;
 
-          if (currSock->lastWritten == ackSeq) {
+          if (currSock->nextWritten == ackSeq) {
             currSock->flag = NO_SEND_DATA;
           } else {
             currSock->flag = DATA_AVAIL;
@@ -693,35 +695,35 @@ implementation {
         // TODO: currently the server just does nothing if the buffer is full,
         // we need to implement sliding window and make the client care about
         // the window field
-        if (currSock->lastRcvd >= currSock->lastRead &&
-            currSock->lastRcvd + msgLength > SOCKET_BUFFER_SIZE) {
+        if (currSock->nextRcvd >= currSock->nextRead &&
+            currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
 
-          uint8_t wrappedAroundLastRcvd =
-              (currSock->lastRcvd + msgLength) % SOCKET_BUFFER_SIZE;
-          if (wrappedAroundLastRcvd >= currSock->lastRead) {
+          uint8_t wrappedAroundnextRcvd =
+              (currSock->nextRcvd + msgLength) % SOCKET_BUFFER_SIZE;
+          if (wrappedAroundnextRcvd >= currSock->nextRead) {
 
-            uint16_t overflow = wrappedAroundLastRcvd - currSock->lastRead + 1;
+            uint16_t overflow = wrappedAroundnextRcvd - currSock->nextRead + 1;
 
             msgLength = msgLength - overflow;
             currSock->flag = BUFFER_FULL;
           }
-        } else if (currSock->lastRcvd < currSock->lastRead &&
-                   currSock->lastRcvd + msgLength >= currSock->lastRead) {
+        } else if (currSock->nextRcvd < currSock->nextRead &&
+                   currSock->nextRcvd + msgLength >= currSock->nextRead) {
 
           uint16_t overflow =
-              currSock->lastRcvd + msgLength - currSock->lastRead + 1;
+              currSock->nextRcvd + msgLength - currSock->nextRead + 1;
           msgLength = msgLength - overflow;
           currSock->flag = BUFFER_FULL;
         }
 
         for (j = 0; j < msgLength; j++) {
-          rcvdBuff[(currSock->lastRcvd + j) % SOCKET_BUFFER_SIZE] =
+          rcvdBuff[(currSock->nextRcvd + j) % SOCKET_BUFFER_SIZE] =
               (msg->payload)[j];
         }
 
         currSock->nextExpected = (msg->seq + msgLength) % SOCKET_BUFFER_SIZE;
-        currSock->lastRcvd =
-            (currSock->lastRcvd + msgLength) % SOCKET_BUFFER_SIZE;
+        currSock->nextRcvd =
+            (currSock->nextRcvd + msgLength) % SOCKET_BUFFER_SIZE;
         currSock->effectiveWindow = currSock->effectiveWindow - msgLength;
         if (currSock->flag == NO_RCVD_DATA) {
           currSock->flag = DATA_AVAIL;
@@ -734,12 +736,12 @@ implementation {
                   uint8_t window, uint8_t * payload, uint8_t length)
         */
         makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
-                currSock->nextExpected, currSock->lastSent,
+                currSock->nextExpected, currSock->nextSend,
                 currSock->effectiveWindow, payloadTCP, 0);
         datagram.length = msg->length;
 
         // TODO: Is this line below correct?
-        currSock->lastSent = currSock->lastSent + msgLength;
+        currSock->nextSend = currSock->nextSend + msgLength;
 
         memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
 
@@ -773,7 +775,7 @@ implementation {
         dbg(GENERAL_CHANNEL, "FIN packet received\n");
 
         makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
-                FINACK, currSock->nextExpected, currSock->lastSent,
+                FINACK, currSock->nextExpected, currSock->nextSend,
                 currSock->effectiveWindow, payloadTCP, 0);
 
         memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
@@ -781,7 +783,7 @@ implementation {
         call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
                                           payloadIP, sizeTCP);
 
-        closingSock = i;
+        call ClosingQueue.pushback(i);
         if (currSock->state == ESTABLISHED) {
           // This is the initial recipient of the FIN packet
           currSock->state = CLOSE_WAIT;
@@ -794,8 +796,11 @@ implementation {
           // FIN sender
           currSock->state = TIME_WAIT;
 
-          // maybe replace time with a constant
-          call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+          if (!currentlyClosing) {
+            // only restart the timer if it is not currently in use
+            call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+            currentlyClosing = TRUE;
+          }
         }
 
         return SUCCESS;
@@ -825,7 +830,7 @@ implementation {
         // Client sends one last ACK packet to server ACKing the server's
         // ISN to complete the three way handshake
         makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
-                msg->seq, currSock->lastSent, 0, payloadSYN, 0);
+                msg->seq, currSock->nextSend, 0, payloadSYN, 0);
 
         memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
 
@@ -861,12 +866,15 @@ implementation {
           currSock->state = FIN_WAIT_2;
           dbg(GENERAL_CHANNEL, "FIN initiator entering FIN_WAIT_2, now "
                                "waiting for FIN from recipient.\n");
-          // wait for FIN to arrive from other node(server)
+          // wait for FIN to arrive from other node (server)
 
         } else if (currSock->state == CLOSE_WAIT) {
-          // TImer before going to closed state
+          // Timer before going to closed state
           dbg(GENERAL_CHANNEL, "FIN recipient now shutting down.\n");
-          call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+          if (!currentlyClosing) {
+            call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+            currentlyClosing = TRUE;
+          }
         }
         return SUCCESS;
       }
@@ -934,8 +942,8 @@ implementation {
                                   uint16_t bufflen) {
     socket_store_t *currSock;
     uint16_t trueBuffLen = bufflen;
-    uint8_t lastRead;
-    uint8_t lastRcvd;
+    uint8_t nextRead;
+    uint8_t nextRcvd;
     uint8_t *rcvdBuff;
 
     uint16_t i;
@@ -944,8 +952,8 @@ implementation {
     }
 
     currSock = &socketList[fd];
-    lastRead = currSock->lastRead;
-    lastRcvd = currSock->lastRcvd;
+    nextRead = currSock->nextRead;
+    nextRcvd = currSock->nextRcvd;
 
     if (!(currSock->bound) || currSock->state != ESTABLISHED ||
         currSock->flag == NO_RCVD_DATA) {
@@ -959,30 +967,30 @@ implementation {
       currSock->flag = NO_RCVD_DATA;
     }
 
-    if (lastRcvd > lastRead && lastRead + trueBuffLen >= lastRcvd) {
+    if (nextRcvd > nextRead && nextRead + trueBuffLen >= nextRcvd) {
 
-      uint8_t overflow = lastRead + trueBuffLen - lastRcvd;
+      uint8_t overflow = nextRead + trueBuffLen - nextRcvd;
       trueBuffLen = trueBuffLen - overflow;
       currSock->flag = NO_RCVD_DATA;
 
-    } else if (lastRcvd < lastRead &&
-               lastRead + trueBuffLen >= SOCKET_BUFFER_SIZE &&
-               (lastRead + trueBuffLen) % SOCKET_BUFFER_SIZE >= lastRcvd) {
+    } else if (nextRcvd < nextRead &&
+               nextRead + trueBuffLen >= SOCKET_BUFFER_SIZE &&
+               (nextRead + trueBuffLen) % SOCKET_BUFFER_SIZE >= nextRcvd) {
       // If the end index starts lower than the start (wrap around) but ends
       // up greater due to overflow
       uint16_t overflow =
-          ((lastRead + trueBuffLen) % SOCKET_BUFFER_SIZE) - lastRcvd;
+          ((nextRead + trueBuffLen) % SOCKET_BUFFER_SIZE) - nextRcvd;
       trueBuffLen = trueBuffLen - overflow;
       currSock->flag = NO_RCVD_DATA;
     }
 
     rcvdBuff = currSock->rcvdBuff;
     for (i = 0; i < trueBuffLen; i++) {
-      buff[i] = rcvdBuff[(lastRead + i) % SOCKET_BUFFER_SIZE];
+      buff[i] = rcvdBuff[(nextRead + i) % SOCKET_BUFFER_SIZE];
     }
 
-    currSock->lastRead =
-        (currSock->lastRead + trueBuffLen) % SOCKET_BUFFER_SIZE;
+    currSock->nextRead =
+        (currSock->nextRead + trueBuffLen) % SOCKET_BUFFER_SIZE;
 
     return trueBuffLen;
   }
@@ -1045,9 +1053,9 @@ implementation {
       // Assign the destination field in socket_store_t
       socket->dest.port = addr->port;
       socket->dest.addr = addr->addr;
-      socket->lastSent = initialSeq;
-      socket->lastWritten = initialSeq;
-      socket->lastAck = initialSeq;
+      socket->nextSend = initialSeq;
+      socket->nextWritten = initialSeq;
+      socket->nextAck = initialSeq;
 
       socket->state = SYN_SENT;
 
@@ -1061,8 +1069,9 @@ implementation {
   }
 
   event void WaitClose.fired() {
-    socket_store_t *currSock = &(socketList[closingSock]);
-    dbg(GENERAL_CHANNEL, "Socket %u is closing.\n", closingSock);
+    socket_t fd = call ClosingQueue.popfront();
+    socket_store_t *currSock = &(socketList[fd]);
+    dbg(GENERAL_CHANNEL, "Socket %u is closing.\n", fd);
 
     // Waits for a while before setting the socket to close.
     currSock->state = CLOSED;
@@ -1072,11 +1081,11 @@ implementation {
     currSock->dest.port = 0;
     currSock->dest.addr = 0;
 
-    currSock->lastWritten = 0;
-    currSock->lastAck = 0;
-    currSock->lastSent = 0;
-    currSock->lastRead = 0;
-    currSock->lastRcvd = 0;
+    currSock->nextWritten = 0;
+    currSock->nextAck = 0;
+    currSock->nextSend = 0;
+    currSock->nextRead = 0;
+    currSock->nextRcvd = 0;
     currSock->nextExpected = 0;
 
     currSock->RTT = 0;
@@ -1086,7 +1095,15 @@ implementation {
     memset(currSock->rcvdBuff, 0, SOCKET_BUFFER_SIZE);
 
     printSockets();
+
+    if (call ClosingQueue.size() > 0) {
+      // If there are other sockets in the queue to be closed
+      call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+    } else {
+      currentlyClosing = FALSE;
+    }
   }
+
   /**
    * Closes the socket.
    * @param
@@ -1128,7 +1145,7 @@ implementation {
               uint8_t window, uint8_t * payload, uint8_t length)
     */
     makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, FIN,
-            currSock->nextExpected, currSock->lastSent, 0, payloadTCP, 0);
+            currSock->nextExpected, currSock->nextSend, 0, payloadTCP, 0);
 
     memcpy(payloadIP, (void *)(&datagram), sizeTCP);
 
@@ -1142,11 +1159,11 @@ implementation {
     // currSock->src = 0;
     // currSock->dest.port = 0;
     // currSock->dest.addr = 0;
-    // currSock->lastWritten = 0;
-    // currSock->lastAck = 0;
-    // currSock->lastSent = 0;
-    // currSock->lastRead = 0;
-    // currSock->lastRcvd = 0;
+    // currSock->nextWritten = 0;
+    // currSock->nextAck = 0;
+    // currSock->nextSend = 0;
+    // currSock->nextRead = 0;
+    // currSock->nextRcvd = 0;
     // currSock->nextExpected = 0;
     // currSock->RTT = 0;
     // currSock->effectiveWindow = SOCKET_BUFFER_SIZE;

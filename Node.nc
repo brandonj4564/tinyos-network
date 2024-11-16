@@ -198,7 +198,17 @@ implementation {
     dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
     dataSent = call Transport.write(fd, data, transferData);
 
-    // call Transport.close(fd); // instantly close without transferring data
+    if (transferData - dataSent <= 0) {
+      // No more data to be sent, close the connection
+      error_t outcome = call Transport.close(fd);
+      dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
+
+      if (outcome == FAIL) {
+        // Still data left, set a timer
+        call ClientTimer.startOneShot(500);
+        currSock = fd;
+      }
+    }
   }
 
   event void Transport.bufferFreed(socket_t fd) {

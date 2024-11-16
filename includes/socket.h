@@ -56,14 +56,14 @@ typedef struct socket_store_t {
   // Worth noting that the index variables below track the last byte written + 1
   // and the last ack received + 1. Basically, if lastAck = 5, this means that
   // index 4 is acknowledged but index 5 is not. It is a little misleading.
-  uint8_t lastWritten; // circular buffer, so this is the end index
-  uint8_t lastAck;     // this is the start index of the buffer
-  uint8_t lastSent;    // this is seq for both client and server
+  uint8_t nextWritten; // circular buffer, so this is the end index
+  uint8_t nextAck;     // this is the start index of the buffer
+  uint8_t nextSend;    // this is seq for both client and server
 
   // This is the receiver portion
   uint8_t rcvdBuff[SOCKET_BUFFER_SIZE];
-  uint8_t lastRead;     // start index
-  uint8_t lastRcvd;     // end index
+  uint8_t nextRead;     // start index
+  uint8_t nextRcvd;     // end index
   uint8_t nextExpected; // this is the client's seq + 1 (ACK)
 
   uint16_t RTT;
