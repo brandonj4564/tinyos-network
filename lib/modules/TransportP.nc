@@ -10,6 +10,7 @@ module TransportP {
   uses interface Timer<TMilli> as WaitClose;
   uses interface Random;
   uses interface List<socket_t> as ClosingQueue;
+  uses interface List<packTCP *> as PacketBuffer;
 }
 
 implementation {
@@ -23,20 +24,6 @@ implementation {
     DATA = 6,
     FINACK = 7,
   };
-
-  typedef nx_struct packTCP {
-    nx_uint8_t srcAddr;
-    nx_uint8_t srcPort;
-    nx_uint8_t destPort;
-    nx_uint8_t seq; // initial seq should be randomized based on clock
-    nx_uint8_t ack;
-    nx_uint8_t flag;
-    nx_uint8_t window;
-    nx_uint8_t length; // payload size in bytes, needed to keep track of indices
-                       // in the buffers
-    nx_uint8_t payload[0];
-  }
-  packTCP;
 
   void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
                uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
@@ -61,6 +48,9 @@ implementation {
   uint8_t closingSock = 0;               // TODO: Turn this into a List
   const uint16_t CLOSE_WAIT_TIME = 5000; // ms
   bool currentlyClosing = FALSE; // This checks if the timer is currently in use
+
+  // Checks if the handlePacket task is already posted
+  bool handlingPacket = FALSE;
 
   // A FIFO queue for each potential socket
   connection_t connectionList[MAX_NUM_OF_SOCKETS][MAX_CONNECTIONS];
@@ -153,34 +143,6 @@ implementation {
             socketList[i].effectiveWindow);
       }
     }
-  }
-
-  void initTestListeners() {
-    socket_t listenerOne;
-    socket_t listenerTwo;
-    socket_t listenerThree;
-
-    socket_addr_t sourceOne;
-    socket_addr_t sourceTwo;
-    socket_addr_t sourceThree;
-
-    listenerOne = call Transport.socket();
-    sourceOne.port = 10;
-    sourceOne.addr = TOS_NODE_ID;
-    call Transport.bind(listenerOne, &sourceOne);
-    call Transport.listen(listenerOne);
-
-    listenerTwo = call Transport.socket();
-    sourceTwo.port = 20;
-    sourceTwo.addr = TOS_NODE_ID;
-    call Transport.bind(listenerTwo, &sourceTwo);
-    call Transport.listen(listenerTwo);
-
-    listenerThree = call Transport.socket();
-    sourceThree.port = 30;
-    sourceThree.addr = TOS_NODE_ID;
-    call Transport.bind(listenerThree, &sourceThree);
-    call Transport.listen(listenerThree);
   }
 
   event void Boot.booted() {
@@ -547,339 +509,362 @@ implementation {
     return trueBuffLen;
   }
 
-  error_t handleSYN(packTCP * msg) {
+  // Call this function when ending the handlePacket() task early
+  // Have to define this function before handlePacket() but implement it later
+  void endHandlePacket();
+
+  task void handlePacket() {
+    packTCP *msg = call PacketBuffer.popfront();
+    uint8_t flag = msg->flag;
     uint8_t srcAddr = msg->srcAddr;
     uint8_t srcPort = msg->srcPort;
     uint8_t destPort = msg->destPort;
-
-    // Sync packet, add the new connection request to the list of requests
-    connection_t newConn;
-    socket_t fd = NULL_SOCKET;
-
     uint16_t i;
-    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-      socket_store_t currSock = socketList[i];
 
-      if (currSock.src == destPort && currSock.dest.port == srcPort &&
-          currSock.dest.addr == srcAddr && currSock.bound) {
+    handlingPacket = TRUE;
 
-        if (currSock.state == ESTABLISHED) {
-          // Basically, is there an existing socket already allocated to this
-          // specific connection with the same ports and addresses?
+    if (flag == SYN) {
+      // Sync packet, add the new connection request to the list of requests
+      connection_t newConn;
+      socket_t fd = NULL_SOCKET;
 
-          // If yes, then the SYN packet is a dupe of some sort
-          dbg(TRANSPORT_CHANNEL, "dupe syn\n");
-          return FAIL;
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t currSock = socketList[i];
+
+        if (currSock.src == destPort && currSock.dest.port == srcPort &&
+            currSock.dest.addr == srcAddr && currSock.bound) {
+
+          if (currSock.state == ESTABLISHED) {
+            // Basically, is there an existing socket already allocated to
+            // this specific connection with the same ports and addresses?
+
+            // If yes, then the SYN packet is a dupe of some sort
+            dbg(TRANSPORT_CHANNEL, "dupe syn\n");
+
+            endHandlePacket();
+            return;
+          }
+        }
+
+        // Find the LISTEN socket with the corresponding port
+        if (currSock.state == LISTEN && currSock.src == destPort) {
+          fd = i;
         }
       }
 
-      // Find the LISTEN socket with the corresponding port
-      if (currSock.state == LISTEN && currSock.src == destPort) {
-        fd = i;
+      if (fd == NULL_SOCKET) {
+        // No matching LISTEN socket with same port, FAIL
+        endHandlePacket();
+        return;
       }
-    }
+      // dbg(TRANSPORT_CHANNEL, "syn still valid with fd %i\n", fd);
 
-    if (fd == NULL_SOCKET) {
-      // No matching LISTEN socket with same port, FAIL
-      return FAIL;
-    }
-    // dbg(TRANSPORT_CHANNEL, "syn still valid with fd %i\n", fd);
+      newConn.srcAddr = srcAddr;
+      newConn.srcPort = srcPort;
+      newConn.destPort = destPort;
+      newConn.seq = msg->seq;
 
-    newConn.srcAddr = srcAddr;
-    newConn.srcPort = srcPort;
-    newConn.destPort = destPort;
-    newConn.seq = msg->seq;
+      if (getQueueSize(fd) < MAX_CONNECTIONS) {
+        // Only push the new connections onto the queue if there is space
+        pushBack(fd, newConn);
 
-    if (getQueueSize(fd) < MAX_CONNECTIONS) {
-      // Only push the new connections onto the queue if there is space
-      pushBack(fd, newConn);
-
-      signal Transport.newConnectionReceived(fd);
-    }
-
-    return SUCCESS;
-  }
-
-  error_t handleACK(packTCP * msg) {
-    int8_t srcAddr = msg->srcAddr;
-    uint8_t srcPort = msg->srcPort;
-    uint8_t destPort = msg->destPort;
-
-    uint16_t i;
-    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-      socket_store_t *currSock = &socketList[i];
-      if (currSock->src == destPort && currSock->dest.port == srcPort &&
-          currSock->dest.addr == srcAddr && currSock->bound &&
-          currSock->state != LISTEN) {
-
-        if (currSock->state == SYN_RCVD) {
-          // if state is SYN_RCVD, then this node is the server and this is the
-          // last part of the three way handshake
-
-          currSock->nextExpected = msg->seq;
-          currSock->state = ESTABLISHED;
-          currSock->flag = NO_RCVD_DATA;
-          dbg(TRANSPORT_CHANNEL,
-              "Three way handshake complete, socket %i conn established\n", i);
-          // printSockets();
-
-          return SUCCESS;
-
-        } else if (currSock->state == ESTABLISHED) {
-          // This code will be executed by the client
-          // TODO
-          uint8_t ackSeq = msg->ack;
-          // uint8_t numAckedBytes = msg->length;
-
-          // Check if ackSeq is what we expect
-          // ackSeq must be equal to nextSend to count that packet as acked
-          if (ackSeq != currSock->nextSend) {
-            // This ack must be out of order or lost, either way it doesn't
-            // match
-            dbg(GENERAL_CHANNEL, "Invalid ACK number: %u\n", ackSeq);
-            return FAIL;
-          }
-
-          dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
-          // update nextAck, free up space in the sendBuffer
-          currSock->nextAck = ackSeq;
-
-          if (currSock->nextWritten == ackSeq) {
-            currSock->flag = NO_SEND_DATA;
-          } else {
-            currSock->flag = DATA_AVAIL;
-          }
-
-          // Data has been acked, more can be written
-          signal Transport.bufferFreed(i);
-
-          // stop and wait: ack received, send next packet
-          sendData(i);
-          printSockets();
-          return SUCCESS;
-
-        } else {
-          // ACK packets should only be received when the state is SYN_RCVD or
-          // ESTABLISHED
-          return FAIL;
-        }
+        signal Transport.newConnectionReceived(fd);
       }
-    }
 
-    return FAIL;
-  }
+      endHandlePacket();
+      return;
+    } else if (flag == DATA) {
 
-  // Called only by the server
-  error_t handleDATA(packTCP * msg) {
-    uint8_t srcAddr = msg->srcAddr;
-    uint8_t srcPort = msg->srcPort;
-    uint8_t destPort = msg->destPort;
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &socketList[i];
+        uint16_t j;
+        if (currSock->src == destPort && currSock->dest.port == srcPort &&
+            currSock->dest.addr == srcAddr && currSock->bound &&
+            currSock->state != LISTEN) {
 
-    uint16_t i;
-    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-      socket_store_t *currSock = &socketList[i];
-      uint16_t j;
-      if (currSock->src == destPort && currSock->dest.port == srcPort &&
-          currSock->dest.addr == srcAddr && currSock->bound &&
-          currSock->state != LISTEN) {
+          packTCP datagram;
+          uint16_t sizeTCP = sizeof(packTCP);
+          uint8_t payloadTCP[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
 
-        packTCP datagram;
-        uint16_t sizeTCP = sizeof(packTCP);
-        uint8_t payloadTCP[0];
-        uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          uint8_t *rcvdBuff = currSock->rcvdBuff;
+          uint8_t msgLength = msg->length;
+          dbg(GENERAL_CHANNEL, "DATA packet received\n");
 
-        uint8_t *rcvdBuff = currSock->rcvdBuff;
-        uint8_t msgLength = msg->length;
-        dbg(GENERAL_CHANNEL, "DATA packet received\n");
+          // TODO: currently the server just does nothing if the buffer is
+          // full, we need to implement sliding window and make the client
+          // care about the window field
+          if (currSock->nextRcvd >= currSock->nextRead &&
+              currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
 
-        // TODO: currently the server just does nothing if the buffer is full,
-        // we need to implement sliding window and make the client care about
-        // the window field
-        if (currSock->nextRcvd >= currSock->nextRead &&
-            currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
+            uint8_t wrappedAroundnextRcvd =
+                (currSock->nextRcvd + msgLength) % SOCKET_BUFFER_SIZE;
+            if (wrappedAroundnextRcvd >= currSock->nextRead) {
 
-          uint8_t wrappedAroundnextRcvd =
-              (currSock->nextRcvd + msgLength) % SOCKET_BUFFER_SIZE;
-          if (wrappedAroundnextRcvd >= currSock->nextRead) {
+              uint16_t overflow =
+                  wrappedAroundnextRcvd - currSock->nextRead + 1;
 
-            uint16_t overflow = wrappedAroundnextRcvd - currSock->nextRead + 1;
+              msgLength = msgLength - overflow;
+              currSock->flag = BUFFER_FULL;
+            }
+          } else if (currSock->nextRcvd < currSock->nextRead &&
+                     currSock->nextRcvd + msgLength >= currSock->nextRead) {
 
+            uint16_t overflow =
+                currSock->nextRcvd + msgLength - currSock->nextRead + 1;
             msgLength = msgLength - overflow;
             currSock->flag = BUFFER_FULL;
           }
-        } else if (currSock->nextRcvd < currSock->nextRead &&
-                   currSock->nextRcvd + msgLength >= currSock->nextRead) {
 
-          uint16_t overflow =
-              currSock->nextRcvd + msgLength - currSock->nextRead + 1;
-          msgLength = msgLength - overflow;
-          currSock->flag = BUFFER_FULL;
+          for (j = 0; j < msgLength; j++) {
+            rcvdBuff[(currSock->nextRcvd + j) % SOCKET_BUFFER_SIZE] =
+                (msg->payload)[j];
+          }
+
+          currSock->nextExpected = (msg->seq + msgLength) % SOCKET_BUFFER_SIZE;
+          currSock->nextRcvd =
+              (currSock->nextRcvd + msgLength) % SOCKET_BUFFER_SIZE;
+          currSock->effectiveWindow = currSock->effectiveWindow - msgLength;
+          if (currSock->flag == NO_RCVD_DATA) {
+            currSock->flag = DATA_AVAIL;
+          }
+          signal Transport.dataAvailable(i);
+
+          /*
+          void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+                    uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+                    uint8_t window, uint8_t * payload, uint8_t length)
+          */
+          makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
+                  ACK, currSock->nextExpected, currSock->nextSend,
+                  currSock->effectiveWindow, payloadTCP, 0);
+          datagram.length = msg->length;
+
+          // TODO: Is this line below correct?
+          currSock->nextSend = currSock->nextSend + msgLength;
+
+          memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
+
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
+
+          // printSockets();
+          endHandlePacket();
+          return;
         }
-
-        for (j = 0; j < msgLength; j++) {
-          rcvdBuff[(currSock->nextRcvd + j) % SOCKET_BUFFER_SIZE] =
-              (msg->payload)[j];
-        }
-
-        currSock->nextExpected = (msg->seq + msgLength) % SOCKET_BUFFER_SIZE;
-        currSock->nextRcvd =
-            (currSock->nextRcvd + msgLength) % SOCKET_BUFFER_SIZE;
-        currSock->effectiveWindow = currSock->effectiveWindow - msgLength;
-        if (currSock->flag == NO_RCVD_DATA) {
-          currSock->flag = DATA_AVAIL;
-        }
-        signal Transport.dataAvailable(i);
-
-        /*
-        void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
-                  uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
-                  uint8_t window, uint8_t * payload, uint8_t length)
-        */
-        makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
-                currSock->nextExpected, currSock->nextSend,
-                currSock->effectiveWindow, payloadTCP, 0);
-        datagram.length = msg->length;
-
-        // TODO: Is this line below correct?
-        currSock->nextSend = currSock->nextSend + msgLength;
-
-        memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
-
-        call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
-                                          payloadIP, sizeTCP);
-
-        // printSockets();
-        return SUCCESS;
       }
-    }
-    return FAIL;
-  }
+      endHandlePacket();
+      return;
 
-  error_t handleFIN(packTCP * msg) {
-    uint8_t srcAddr = msg->srcAddr;
-    uint8_t srcPort = msg->srcPort;
-    uint8_t destPort = msg->destPort;
+    } else if (flag == FIN) {
+      // Close the connection
 
-    uint16_t i;
-    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-      socket_store_t *currSock = &socketList[i];
-      if (currSock->src == destPort && currSock->dest.port == srcPort &&
-          currSock->dest.addr == srcAddr && currSock->bound &&
-          currSock->state != LISTEN) {
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &socketList[i];
+        if (currSock->src == destPort && currSock->dest.port == srcPort &&
+            currSock->dest.addr == srcAddr && currSock->bound &&
+            currSock->state != LISTEN) {
 
-        packTCP datagram;
-        uint16_t sizeTCP = sizeof(packTCP);
-        uint8_t payloadTCP[0];
-        uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          packTCP datagram;
+          uint16_t sizeTCP = sizeof(packTCP);
+          uint8_t payloadTCP[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
 
-        dbg(GENERAL_CHANNEL, "FIN packet received\n");
+          dbg(GENERAL_CHANNEL, "FIN packet received\n");
 
-        makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
-                FINACK, currSock->nextExpected, currSock->nextSend,
-                currSock->effectiveWindow, payloadTCP, 0);
+          makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
+                  FINACK, currSock->nextExpected, currSock->nextSend,
+                  currSock->effectiveWindow, payloadTCP, 0);
 
-        memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
+          memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
 
-        call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
-                                          payloadIP, sizeTCP);
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
 
-        call ClosingQueue.pushback(i);
-        if (currSock->state == ESTABLISHED) {
-          // This is the initial recipient of the FIN packet
-          currSock->state = CLOSE_WAIT;
+          call ClosingQueue.pushback(i);
+          if (currSock->state == ESTABLISHED) {
+            // This is the initial recipient of the FIN packet
+            currSock->state = CLOSE_WAIT;
 
-          // Don't worry if all the data has been read yet, the app will
-          // have to set a timer if it hasn't
-          signal Transport.alertClose(i);
-        } else if (currSock->state == FIN_WAIT_2) {
-          // This is the second FIN packet which arrives back at the original
-          // FIN sender
-          currSock->state = TIME_WAIT;
+            // Don't worry if all the data has been read yet, the app will
+            // have to set a timer if it hasn't
+            signal Transport.alertClose(i);
+          } else if (currSock->state == FIN_WAIT_2) {
+            // This is the second FIN packet which arrives back at the
+            // original FIN sender
+            currSock->state = TIME_WAIT;
 
-          if (!currentlyClosing) {
-            // only restart the timer if it is not currently in use
-            call WaitClose.startOneShot(CLOSE_WAIT_TIME);
-            currentlyClosing = TRUE;
+            if (!currentlyClosing) {
+              // only restart the timer if it is not currently in use
+              call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+              currentlyClosing = TRUE;
+            }
+          }
+
+          endHandlePacket();
+          return;
+        }
+      }
+
+      endHandlePacket();
+      return;
+
+    } else if (flag == ACK) {
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &socketList[i];
+        if (currSock->src == destPort && currSock->dest.port == srcPort &&
+            currSock->dest.addr == srcAddr && currSock->bound &&
+            currSock->state != LISTEN) {
+
+          if (currSock->state == SYN_RCVD) {
+            // if state is SYN_RCVD, then this node is the server and this is
+            // the last part of the three way handshake
+
+            currSock->nextExpected = msg->seq;
+            currSock->state = ESTABLISHED;
+            currSock->flag = NO_RCVD_DATA;
+            dbg(TRANSPORT_CHANNEL,
+                "Three way handshake complete, socket %i conn established\n",
+                i);
+            // printSockets();
+
+            endHandlePacket();
+            return;
+
+          } else if (currSock->state == ESTABLISHED) {
+            // This code will be executed by the client
+            // TODO
+            uint8_t ackSeq = msg->ack;
+            // uint8_t numAckedBytes = msg->length;
+
+            // Check if ackSeq is what we expect
+            // ackSeq must be equal to nextSend to count that packet as acked
+            if (ackSeq != currSock->nextSend) {
+              // This ack must be out of order or lost, either way it doesn't
+              // match
+              dbg(GENERAL_CHANNEL, "Invalid ACK number: %u\n", ackSeq);
+              endHandlePacket();
+              return;
+            }
+
+            dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
+            // update nextAck, free up space in the sendBuffer
+            currSock->nextAck = ackSeq;
+
+            if (currSock->nextWritten == ackSeq) {
+              currSock->flag = NO_SEND_DATA;
+            } else {
+              currSock->flag = DATA_AVAIL;
+            }
+
+            // Data has been acked, more can be written
+            signal Transport.bufferFreed(i);
+
+            // stop and wait: ack received, send next packet
+            sendData(i);
+            printSockets();
+
+            endHandlePacket();
+            return;
+
+          } else {
+            // ACK packets should only be received when the state is SYN_RCVD
+            // or ESTABLISHED
+            endHandlePacket();
+            return;
           }
         }
-
-        return SUCCESS;
       }
-    }
 
-    return FAIL;
-  }
+      endHandlePacket();
+      return;
 
-  error_t handleSYNACK(packTCP * msg) {
-    uint16_t i;
-    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-      socket_store_t *currSock = &(socketList[i]);
+    } else if (flag == SYNACK) {
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &(socketList[i]);
 
-      if (currSock->src == msg->destPort &&
-          currSock->dest.port == msg->srcPort &&
-          currSock->dest.addr == msg->srcAddr && currSock->bound &&
-          currSock->state == SYN_SENT) {
-        // Checks if this is a SYN + ACK from a server to an existing
-        // SYN_SENT socket
+        if (currSock->src == msg->destPort &&
+            currSock->dest.port == msg->srcPort &&
+            currSock->dest.addr == msg->srcAddr && currSock->bound &&
+            currSock->state == SYN_SENT) {
+          // Checks if this is a SYN + ACK from a server to an existing
+          // SYN_SENT socket
 
-        packTCP msgAck;
-        uint8_t payloadSYN[0];
-        uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
-        uint16_t sizeTCP = sizeof(packTCP);
+          packTCP msgAck;
+          uint8_t payloadSYN[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+          uint16_t sizeTCP = sizeof(packTCP);
 
-        // Client sends one last ACK packet to server ACKing the server's
-        // ISN to complete the three way handshake
-        makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
-                msg->seq, currSock->nextSend, 0, payloadSYN, 0);
+          // Client sends one last ACK packet to server ACKing the server's
+          // ISN to complete the three way handshake
+          makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
+                  msg->seq, currSock->nextSend, 0, payloadSYN, 0);
 
-        memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
+          memcpy(payloadIP, (void *)(&msgAck), sizeTCP);
 
-        call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
-                                          payloadIP, sizeTCP);
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
 
-        currSock->state = ESTABLISHED;
-        currSock->flag = NO_SEND_DATA;
-        currSock->nextExpected = msg->seq; // client tracks server's seq
+          currSock->state = ESTABLISHED;
+          currSock->flag = NO_SEND_DATA;
+          currSock->nextExpected = msg->seq; // client tracks server's seq
 
-        signal Transport.connectionSuccess(i);
-        // printSockets();
-
-        return SUCCESS;
-      }
-    }
-    return FAIL;
-  }
-
-  error_t handleFINACK(packTCP * msg) {
-    uint8_t srcAddr = msg->srcAddr;
-    uint8_t srcPort = msg->srcPort;
-    uint8_t destPort = msg->destPort;
-
-    uint16_t i;
-    dbg(GENERAL_CHANNEL, "FINACK arrived.\n");
-    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
-      socket_store_t *currSock = &socketList[i];
-      if (currSock->src == destPort && currSock->dest.port == srcPort &&
-          currSock->dest.addr == srcAddr && currSock->bound &&
-          currSock->state != LISTEN) {
-        if (currSock->state == FIN_WAIT_1) {
-          currSock->state = FIN_WAIT_2;
-          dbg(GENERAL_CHANNEL, "FIN initiator entering FIN_WAIT_2, now "
-                               "waiting for FIN from recipient.\n");
-          // wait for FIN to arrive from other node (server)
-
-        } else if (currSock->state == CLOSE_WAIT) {
-          // Timer before going to closed state
-          dbg(GENERAL_CHANNEL, "FIN recipient now shutting down.\n");
-          if (!currentlyClosing) {
-            call WaitClose.startOneShot(CLOSE_WAIT_TIME);
-            currentlyClosing = TRUE;
-          }
+          signal Transport.connectionSuccess(i);
+          // printSockets();
+          endHandlePacket();
+          return;
         }
-        return SUCCESS;
       }
+
+      endHandlePacket();
+      return;
+
+    } else if (flag == RST) {
+      // RST requires a hard close
+      call Transport.release(2);
+    } else if (flag == FINACK) {
+
+      dbg(GENERAL_CHANNEL, "FINACK arrived.\n");
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &socketList[i];
+        if (currSock->src == destPort && currSock->dest.port == srcPort &&
+            currSock->dest.addr == srcAddr && currSock->bound &&
+            currSock->state != LISTEN) {
+          if (currSock->state == FIN_WAIT_1) {
+            currSock->state = FIN_WAIT_2;
+            dbg(GENERAL_CHANNEL, "FIN initiator entering FIN_WAIT_2, now "
+                                 "waiting for FIN from recipient.\n");
+            // wait for FIN to arrive from other node (server)
+
+          } else if (currSock->state == CLOSE_WAIT) {
+            // Timer before going to closed state
+            dbg(GENERAL_CHANNEL, "FIN recipient now shutting down.\n");
+            if (!currentlyClosing) {
+              call WaitClose.startOneShot(CLOSE_WAIT_TIME);
+              currentlyClosing = TRUE;
+            }
+          }
+
+          endHandlePacket();
+          return;
+        }
+      }
+      endHandlePacket();
+      return;
     }
-    return FAIL;
+
+    endHandlePacket();
+    return;
+  }
+
+  void endHandlePacket() {
+    if (call PacketBuffer.isEmpty()) {
+      // If there are no more packets in buffer
+      handlingPacket = FALSE;
+    } else {
+      // If there are still packets, repost the task
+      post handlePacket();
+    }
   }
 
   /**
@@ -893,34 +878,20 @@ implementation {
   command error_t Transport.receive(uint8_t * payload) {
     // IP unwraps its header and passes the payload up to TCP
     packTCP *msg = (packTCP *)payload;
-    uint8_t flag = msg->flag;
 
-    if (flag == SYN) {
-      return handleSYN(msg);
-
-    } else if (flag == DATA) {
-      // Needed because ACK packets don't carry data in this implementation
-      return handleDATA(msg);
-
-    } else if (flag == FIN) {
-      // Close the connection
-      return handleFIN(msg);
-
-    } else if (flag == ACK) {
-      return handleACK(msg);
-
-    } else if (flag == SYNACK) {
-      return handleSYNACK(msg);
-
-    } else if (flag == RST) {
-      // RST requires a hard close
-      call Transport.release(2);
-
-    } else if (flag == FINACK) {
-      return handleFINACK(msg);
+    if (call PacketBuffer.maxSize() <= call PacketBuffer.size()) {
+      // PacketBuffer is full
+      return FAIL;
     }
 
-    return FAIL;
+    call PacketBuffer.pushback(msg);
+
+    if (!handlingPacket) {
+      // Only post another handlePacket task if it is not already posted
+      post handlePacket();
+    }
+
+    return SUCCESS;
   }
 
   /**
@@ -1151,24 +1122,6 @@ implementation {
 
     call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
                                       payloadIP, sizeTCP);
-
-    // Reset all values of the socket
-    // currSock->state = CLOSED;
-    // currSock->bound = FALSE;
-    // currSock->flag = UNINIT;
-    // currSock->src = 0;
-    // currSock->dest.port = 0;
-    // currSock->dest.addr = 0;
-    // currSock->nextWritten = 0;
-    // currSock->nextAck = 0;
-    // currSock->nextSend = 0;
-    // currSock->nextRead = 0;
-    // currSock->nextRcvd = 0;
-    // currSock->nextExpected = 0;
-    // currSock->RTT = 0;
-    // currSock->effectiveWindow = SOCKET_BUFFER_SIZE;
-    // memset(currSock->sendBuff, 0, SOCKET_BUFFER_SIZE);
-    // memset(currSock->rcvdBuff, 0, SOCKET_BUFFER_SIZE);
 
     return SUCCESS;
   }

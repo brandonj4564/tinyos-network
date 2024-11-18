@@ -33,6 +33,20 @@ typedef nx_struct packIP {
 }
 packIP;
 
+typedef nx_struct packTCP {
+  nx_uint8_t srcAddr;
+  nx_uint8_t srcPort;
+  nx_uint8_t destPort;
+  nx_uint8_t seq; // initial seq should be randomized based on clock
+  nx_uint8_t ack;
+  nx_uint8_t flag;
+  nx_uint8_t window;
+  nx_uint8_t length; // payload size in bytes, needed to keep track of indices
+                     // in the buffers
+  nx_uint8_t payload[0];
+}
+packTCP;
+
 /*
  * logPack
  * 	Sends packet information to the general channel.
