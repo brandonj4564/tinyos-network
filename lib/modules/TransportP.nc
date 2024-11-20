@@ -6,7 +6,7 @@ module TransportP {
 
   uses interface Boot;
   uses interface InternetProtocol;
-  uses interface Timer<TMilli> as CloseClient;
+  uses interface Timer<TMilli> as PacketTimeout;
   uses interface Timer<TMilli> as WaitClose;
   uses interface Random;
   uses interface List<socket_t> as ClosingQueue;
@@ -23,6 +23,8 @@ implementation {
     RST = 5,
     DATA = 6,
     FINACK = 7,
+
+    MAX_NUM_TIMESTAMPS = 30,
   };
 
   void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
@@ -42,15 +44,14 @@ implementation {
   // Null socket, an invalid socket fd
   const uint16_t NULL_SOCKET = MAX_NUM_OF_SOCKETS + 1;
 
-  // The current socket being closed
-  // I'm aware that this causes problems if multiple sockets close at once, but
-  // such is the nature of not being able to pass args into timers
-  uint8_t closingSock = 0;               // TODO: Turn this into a List
   const uint16_t CLOSE_WAIT_TIME = 5000; // ms
-  bool currentlyClosing = FALSE; // This checks if the timer is currently in use
 
   // Checks if the handlePacket task is already posted
   bool handlingPacket = FALSE;
+
+  /*
+  -------------------- CONNECTION SECTION --------------------
+  */
 
   // A FIFO queue for each potential socket
   connection_t connectionList[MAX_NUM_OF_SOCKETS][MAX_CONNECTIONS];
@@ -101,9 +102,231 @@ implementation {
     }
   }
 
+  /*
+  -------------------- END OF CONNECTION SECTION --------------------
+  */
+
   socket_store_t socketList[MAX_NUM_OF_SOCKETS];
   // currentSocket is used to index socketList
   uint8_t currentSocket = 0;
+
+  /*
+  -------------------- TIMESTAMP SECTION --------------------
+  */
+  typedef struct timestamp_t {
+    bool bound;
+    uint8_t flag;
+    socket_t fd;
+
+    // This is the information needed per timestamp to identify the packet
+    uint8_t srcPort;
+    uint8_t destAddr;
+    uint8_t destPort;
+
+    // Packet index of write buffer and len
+    uint8_t nextSend;
+    uint8_t length;
+
+    uint32_t timeSent;
+  } timestamp_t;
+
+  timestamp_t timestampList[MAX_NUM_TIMESTAMPS];
+  uint16_t timestampIndex = 0;
+  bool timestampEmpty = TRUE;
+  const uint16_t TIMEOUT_TIMER = 100;
+
+  uint16_t timestampListSize() {
+    uint16_t i;
+    uint16_t size = 0;
+
+    for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
+      if (timestampList[i].bound) {
+        size++;
+      }
+    }
+
+    return size;
+  }
+
+  void resendPacket(timestamp_t * currStamp) {
+    // TODO: this
+    packTCP msg;
+
+    uint8_t payloadTCP[currStamp->length];
+    uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+    uint16_t sizeTCP = sizeof(packTCP);
+
+    socket_store_t *currSock = &socketList[currStamp->fd];
+
+    /*
+    void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+             uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+             uint8_t window, uint8_t * payload, uint8_t length)
+    */
+    makeTCP(&msg, TOS_NODE_ID, currStamp->srcPort, currStamp->destPort,
+            currStamp->flag, clientISN + 1, serverISN,
+            boundSocket->effectiveWindow, payloadTCP, currStamp->length);
+
+    memcpy(payloadIP, (void *)(&msg), sizeTCP);
+
+    call InternetProtocol.sendMessage(currStamp->destAddr, 10, PROTOCOL_TCP,
+                                      payloadIP, sizeTCP);
+  }
+
+  task void handlePacketTimeout() {
+    uint16_t i;
+    uint32_t timeNow;
+
+    if (timestampEmpty) {
+      // If there are no packets in flight, do nothing
+      return;
+    }
+
+    timeNow = call PacketTimeout.getNow();
+
+    for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
+      timestamp_t *currStamp = &timestampList[i];
+      if (currStamp->bound) {
+        // dbg(GENERAL_CHANNEL, "timeNow: %u\n", timeNow);
+        // dbg(GENERAL_CHANNEL, "Packet time + RTT: %u\n",
+        //     currStamp->timeSent + socketList[currStamp->fd].RTT);
+
+        if (currStamp->timeSent + socketList[currStamp->fd].RTT <= timeNow) {
+          // The packet has timed out
+          // dbg(GENERAL_CHANNEL, "Packet timed out from socket %u\n",
+          //     currStamp->fd);
+
+          resendPacket(currStamp);
+        }
+      }
+    }
+
+    if (timestampListSize() == 0) {
+      timestampEmpty = TRUE;
+    } else {
+      timestampEmpty = FALSE; // just in case
+      // dbg(GENERAL_CHANNEL, "PacketTimeout restarted\n");
+      call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+    }
+  }
+
+  event void PacketTimeout.fired() {
+    // Keep event code as short as possible
+    post handlePacketTimeout();
+  }
+
+  // Creates a timestamp for a newly sent packet
+  /**
+   * Checks to see if there are socket connections to connect to and
+   * if there is one, connect to it.
+   * @param
+   *    socket_t fd
+   * @param
+   *    uint8_t flag
+   * @param
+   *    uint8_t nextSend
+   * @param
+   *    uint8_t length
+   * @return error_t
+   */
+  error_t createTimestamp(socket_t fd, uint8_t flag, uint8_t nextSend,
+                          uint8_t length) {
+    uint8_t counter = 0;
+    socket_store_t *currSock = &socketList[fd];
+    timestamp_t *currStamp;
+
+    while (1) {
+      if (!timestampList[timestampIndex % MAX_NUM_TIMESTAMPS].bound) {
+        currStamp = &timestampList[timestampIndex % MAX_NUM_TIMESTAMPS];
+        timestampIndex++;
+        break;
+      }
+      counter++;
+      timestampIndex++;
+
+      if (counter > MAX_NUM_TIMESTAMPS + 1) {
+        // No free timestamps
+        return FAIL;
+      }
+    }
+
+    currStamp->bound = TRUE;
+    currStamp->srcPort = currSock->src;
+    currStamp->destAddr = currSock->dest.addr;
+    currStamp->destPort = currSock->dest.port;
+    currStamp->flag = flag;
+    currStamp->nextSend = nextSend;
+    currStamp->length = length;
+    currStamp->fd = fd;
+
+    currStamp->timeSent = call PacketTimeout.getNow();
+
+    timestampEmpty = FALSE;
+
+    dbg(GENERAL_CHANNEL, "---------ADD TIMESTAMP---------\n");
+    dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
+    dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
+    dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+    dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+    dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
+    dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
+    dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+    return SUCCESS;
+  }
+
+  // Removing the timestamp, maybe the packet was acked or it timed out
+  error_t removeTimestamp(socket_t fd, uint8_t flag, uint8_t nextSend,
+                          uint8_t length) {
+    socket_store_t *currSock = &socketList[fd];
+    timestamp_t *currStamp;
+    uint16_t i;
+
+    for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
+      if (timestampList[i].bound) {
+        currStamp = &timestampList[i];
+
+        if (currStamp->srcPort == currSock->src &&
+            currStamp->destAddr == currSock->dest.addr &&
+            currStamp->destPort == currSock->dest.port &&
+            currStamp->flag == flag && currStamp->nextSend == nextSend &&
+            currStamp->length == length) {
+          // Check for exact packet match
+
+          // Remove the timestamp
+          currStamp->bound = FALSE;
+
+          if (timestampListSize() == 0) {
+            // no more bound timestamps
+            timestampEmpty = TRUE;
+          }
+
+          dbg(GENERAL_CHANNEL, "---------REMOVE TIMESTAMP---------\n");
+          dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
+          dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
+          dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+          dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+          dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
+          dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
+          dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+          return SUCCESS;
+        }
+      }
+    }
+
+    dbg(GENERAL_CHANNEL, "---------TIMESTAMP NOT REMOVED---------\n");
+    dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
+    dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
+    dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+    dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+    dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
+    dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
+    dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+    return FAIL;
+  }
+
+  /*
+  -------------------- END OF TIMESTAMP SECTION --------------------
+  */
 
   void printSockets() {
     // TODO: make a command that prints out all info for the sockets for testing
@@ -166,7 +389,7 @@ implementation {
       socketList[i].nextExpected = 0;
 
       // Set RTT and window values to 0 or default
-      socketList[i].RTT = 0;
+      socketList[i].RTT = 50; // ms
       socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE;
 
       // Optionally initialize buffers to zero
@@ -174,6 +397,10 @@ implementation {
       memset(socketList[i].rcvdBuff, 0, SOCKET_BUFFER_SIZE);
 
       connectionListIndex[i] = 0;
+    }
+
+    for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
+      timestampList[i].bound = FALSE;
     }
   }
 
@@ -285,8 +512,8 @@ implementation {
     // A hack to improve readability by initializing variables later
     if (1) {
       socket_store_t *boundSocket = &(socketList[newSocket]);
-      // uint8_t serverISN = call Random.rand16() % SOCKET_BUFFER_SIZE;
-      uint8_t serverISN = 0;
+      uint8_t serverISN = call Random.rand16() % SOCKET_BUFFER_SIZE;
+      // uint8_t serverISN = 0;
       uint8_t clientISN = newConn.seq;
       packTCP msg;
 
@@ -317,6 +544,11 @@ implementation {
       // Assign the destination field in socket_store_t
       boundSocket->dest.port = newConn.srcPort;
       boundSocket->dest.addr = newConn.srcAddr;
+
+      createTimestamp(newSocket, SYNACK, 0, 0);
+      if (!(call PacketTimeout.isRunning())) {
+        call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+      }
 
       boundSocket->state = SYN_RCVD;
     }
@@ -408,6 +640,10 @@ implementation {
     call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
                                       payloadIP,
                                       payloadSizeTCP + sizeof(packTCP));
+    createTimestamp(fd, DATA, nextSend, payloadSizeTCP);
+    if (!(call PacketTimeout.isRunning())) {
+      call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+    }
 
     currSock->nextSend =
         (currSock->nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
@@ -559,6 +795,16 @@ implementation {
       }
       // dbg(TRANSPORT_CHANNEL, "syn still valid with fd %i\n", fd);
 
+      for (i = 0; i < getQueueSize(fd); i++) {
+        connection_t currConn = connectionList[fd][i];
+        if (currConn.srcAddr == srcAddr && currConn.srcPort == srcPort &&
+            currConn.destPort == destPort && currConn.seq == msg->seq) {
+          // is there already a connection request from this client
+          endHandlePacket();
+          return;
+        }
+      }
+
       newConn.srcAddr = srcAddr;
       newConn.srcPort = srcPort;
       newConn.destPort = destPort;
@@ -640,13 +886,21 @@ implementation {
                   currSock->effectiveWindow, payloadTCP, 0);
           datagram.length = msg->length;
 
-          // TODO: Is this line below correct?
-          currSock->nextSend = currSock->nextSend + msgLength;
-
           memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
 
-          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
-                                            PROTOCOL_TCP, payloadIP, sizeTCP);
+          // call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+          //                                   PROTOCOL_TCP, payloadIP,
+          //                                   sizeTCP);
+
+          // createTimestamp(i, ACK, currSock->nextSend + msgLength, 0);
+          // if (!(call PacketTimeout.isRunning())) {
+          //   call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+          // }
+
+          removeTimestamp(i, ACK, currSock->nextSend, 0);
+
+          // TODO: Is this line below correct?
+          currSock->nextSend = currSock->nextSend + msgLength;
 
           // printSockets();
           endHandlePacket();
@@ -681,6 +935,11 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
+          createTimestamp(i, FINACK, currSock->nextSend, 0);
+          if (!(call PacketTimeout.isRunning())) {
+            call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+          }
+
           call ClosingQueue.pushback(i);
           if (currSock->state == ESTABLISHED) {
             // This is the initial recipient of the FIN packet
@@ -694,10 +953,9 @@ implementation {
             // original FIN sender
             currSock->state = TIME_WAIT;
 
-            if (!currentlyClosing) {
+            if (!(call WaitClose.isRunning())) {
               // only restart the timer if it is not currently in use
               call WaitClose.startOneShot(CLOSE_WAIT_TIME);
-              currentlyClosing = TRUE;
             }
           }
 
@@ -726,6 +984,7 @@ implementation {
             dbg(TRANSPORT_CHANNEL,
                 "Three way handshake complete, socket %i conn established\n",
                 i);
+            removeTimestamp(i, SYNACK, 0, 0);
             // printSockets();
 
             endHandlePacket();
@@ -733,7 +992,6 @@ implementation {
 
           } else if (currSock->state == ESTABLISHED) {
             // This code will be executed by the client
-            // TODO
             uint8_t ackSeq = msg->ack;
             // uint8_t numAckedBytes = msg->length;
 
@@ -805,6 +1063,13 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
+          // createTimestamp(i, ACK, currSock->nextSend, 0); // don't think this
+          // is necessary
+          removeTimestamp(i, SYN, currSock->nextSend, 0);
+          if (!(call PacketTimeout.isRunning())) {
+            call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+          }
+
           currSock->state = ESTABLISHED;
           currSock->flag = NO_SEND_DATA;
           currSock->nextExpected = msg->seq; // client tracks server's seq
@@ -839,9 +1104,8 @@ implementation {
           } else if (currSock->state == CLOSE_WAIT) {
             // Timer before going to closed state
             dbg(GENERAL_CHANNEL, "FIN recipient now shutting down.\n");
-            if (!currentlyClosing) {
+            if (!(call WaitClose.isRunning())) {
               call WaitClose.startOneShot(CLOSE_WAIT_TIME);
-              currentlyClosing = TRUE;
             }
           }
 
@@ -994,8 +1258,8 @@ implementation {
       // matter
       uint8_t flag = SYN;
       // Randomize initial sequence number
-      // uint8_t initialSeq = call Random.rand16() % SOCKET_BUFFER_SIZE;
-      uint8_t initialSeq = 0;
+      uint8_t initialSeq = call Random.rand16() % SOCKET_BUFFER_SIZE;
+      // uint8_t initialSeq = 0;
       uint8_t initialAck = 0;
       uint8_t window = 0;
 
@@ -1030,13 +1294,13 @@ implementation {
 
       socket->state = SYN_SENT;
 
+      createTimestamp(fd, SYN, initialSeq, 0);
+      if (!(call PacketTimeout.isRunning())) {
+        call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+      }
+
       return SUCCESS;
     }
-  }
-
-  event void CloseClient.fired() {
-    // Checks if there is still data in the sendBuffer
-    // If no, send FIN message. If yes, start timer again
   }
 
   event void WaitClose.fired() {
@@ -1070,8 +1334,6 @@ implementation {
     if (call ClosingQueue.size() > 0) {
       // If there are other sockets in the queue to be closed
       call WaitClose.startOneShot(CLOSE_WAIT_TIME);
-    } else {
-      currentlyClosing = FALSE;
     }
   }
 
@@ -1122,6 +1384,11 @@ implementation {
 
     call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
                                       payloadIP, sizeTCP);
+
+    createTimestamp(fd, FIN, currSock->nextSend, 0);
+    if (!(call PacketTimeout.isRunning())) {
+      call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+    }
 
     return SUCCESS;
   }

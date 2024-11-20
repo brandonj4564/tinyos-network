@@ -66,7 +66,7 @@ typedef struct socket_store_t {
   uint8_t nextRcvd;     // end index
   uint8_t nextExpected; // this is the client's seq + 1 (ACK)
 
-  uint16_t RTT;
+  uint16_t RTT; // in ms
   uint8_t effectiveWindow;
 } socket_store_t;
 

@@ -149,6 +149,8 @@ def main():
     s.runTime(10);
     s.loadTopo("example.topo");
     s.loadNoise("no_noise.txt");
+    # s.loadNoise("meyer-heavy.txt");
+
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
