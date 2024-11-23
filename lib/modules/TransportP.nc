@@ -125,7 +125,11 @@ implementation {
 
     // Packet index of write buffer and len
     uint8_t nextSend;
+    uint8_t nextWritten;
+    uint8_t nextAck;
+    uint8_t nextExpected;
     uint8_t length;
+    uint8_t effectiveWindow;
 
     uint32_t timeSent;
   } timestamp_t;
@@ -133,7 +137,7 @@ implementation {
   timestamp_t timestampList[MAX_NUM_TIMESTAMPS];
   uint16_t timestampIndex = 0;
   bool timestampEmpty = TRUE;
-  const uint16_t TIMEOUT_TIMER = 100;
+  const uint16_t TIMEOUT_TIMER = 10000;
 
   uint16_t timestampListSize() {
     uint16_t i;
@@ -149,28 +153,94 @@ implementation {
   }
 
   void resendPacket(timestamp_t * currStamp) {
-    // TODO: this
     packTCP msg;
+    uint8_t flag = currStamp->flag;
 
     uint8_t payloadTCP[currStamp->length];
     uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
     uint16_t sizeTCP = sizeof(packTCP);
 
-    socket_store_t *currSock = &socketList[currStamp->fd];
+    uint8_t ack = 0;
+    uint8_t len = currStamp->length;
+
+    if (!currStamp->bound) {
+      return;
+    }
 
     /*
     void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
              uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
              uint8_t window, uint8_t * payload, uint8_t length)
     */
-    makeTCP(&msg, TOS_NODE_ID, currStamp->srcPort, currStamp->destPort,
-            currStamp->flag, clientISN + 1, serverISN,
-            boundSocket->effectiveWindow, payloadTCP, currStamp->length);
 
-    memcpy(payloadIP, (void *)(&msg), sizeTCP);
+    if (flag == DATA) {
+      // Put the data in the payload again
+      uint8_t nextSend = currStamp->nextSend;
+      uint16_t payloadSizeTCP = currStamp->length;
+
+      uint8_t *sendBuff;
+      uint8_t i;
+
+      sendBuff = (&socketList[currStamp->fd])->sendBuff;
+      // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
+      for (i = 0; i < payloadSizeTCP; i++) {
+        // Sequence number is the start of the data read
+        payloadTCP[i] = sendBuff[(nextSend + i) % SOCKET_BUFFER_SIZE];
+      }
+
+      ack = currStamp->nextExpected + currStamp->length;
+
+    } else if (flag == ACK) {
+      ack = currStamp->nextSend;
+      len = 0;
+    } else if (flag == SYN) {
+      ack = 0;
+      len = 0;
+    } else if (flag == SYNACK) {
+      ack = currStamp->nextExpected;
+      len = 0;
+    } else if (flag == FIN) {
+      ack = currStamp->nextExpected;
+      len = 0;
+    } else if (flag == RST) {
+      // TODO lol
+      // actually maybe this doesn't even need a resend
+    }
+
+    dbg(GENERAL_CHANNEL, "---------RESENDING TIMESTAMP---------\n");
+    dbg(GENERAL_CHANNEL, "socket: %u\n", currStamp->fd);
+    dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currStamp->srcPort);
+    dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currStamp->destAddr);
+    dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currStamp->destPort);
+    dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
+    dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
+    dbg(GENERAL_CHANNEL, "TS length: %u\n", len);
+
+    // dbg(GENERAL_CHANNEL, "socket: %u | srcPort: %u | destAddr: % u\n",
+    //     currStamp->fd, currStamp->srcPort, currStamp->destAddr);
+    // dbg(GENERAL_CHANNEL, "destPort: %u | flag: %u | nextSend: %u\n",
+    //     currStamp->destPort, flag, currStamp->nextSend);
+    // dbg(GENERAL_CHANNEL, "length: %u\n", length);
+
+    makeTCP(&msg, TOS_NODE_ID, currStamp->srcPort, currStamp->destPort,
+            currStamp->flag, ack, currStamp->nextSend,
+            currStamp->effectiveWindow, payloadTCP, len);
+
+    memcpy(payloadIP, (void *)(&msg), sizeTCP + len);
 
     call InternetProtocol.sendMessage(currStamp->destAddr, 10, PROTOCOL_TCP,
-                                      payloadIP, sizeTCP);
+                                      payloadIP, sizeTCP + len);
+
+    currStamp->timeSent = call PacketTimeout.getNow(); // reset timesent
+  }
+
+  void printPacket(packTCP * msg) {
+    dbg(GENERAL_CHANNEL, "----------NEW PACKET----------\n");
+    dbg(GENERAL_CHANNEL, "srcAddr: %u | srcPort: %u | destPort: %u\n",
+        msg->srcAddr, msg->srcPort, msg->destPort);
+    dbg(GENERAL_CHANNEL, "seq: %u | ack: %u | flag: %u\n", msg->seq, msg->ack,
+        msg->flag);
+    dbg(GENERAL_CHANNEL, "window: %u | length: %u\n", msg->window, msg->length);
   }
 
   task void handlePacketTimeout() {
@@ -256,6 +326,10 @@ implementation {
     currStamp->destPort = currSock->dest.port;
     currStamp->flag = flag;
     currStamp->nextSend = nextSend;
+    currStamp->nextWritten = currSock->nextWritten;
+    currStamp->nextAck = currSock->nextAck;
+    currStamp->nextExpected = currSock->nextExpected;
+    currStamp->effectiveWindow = currSock->effectiveWindow;
     currStamp->length = length;
     currStamp->fd = fd;
 
@@ -271,6 +345,11 @@ implementation {
     dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
     dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
     dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+
+    if (!(call PacketTimeout.isRunning())) {
+      call PacketTimeout.startOneShot(TIMEOUT_TIMER);
+    }
+
     return SUCCESS;
   }
 
@@ -313,7 +392,7 @@ implementation {
       }
     }
 
-    dbg(GENERAL_CHANNEL, "---------TIMESTAMP NOT REMOVED---------\n");
+    dbg(GENERAL_CHANNEL, "---------TIMESTAMP FAIL REMOVED---------\n");
     dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
     dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
     dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
@@ -329,7 +408,6 @@ implementation {
   */
 
   void printSockets() {
-    // TODO: make a command that prints out all info for the sockets for testing
     int i;
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       if (socketList[i].bound) {
@@ -389,7 +467,7 @@ implementation {
       socketList[i].nextExpected = 0;
 
       // Set RTT and window values to 0 or default
-      socketList[i].RTT = 50; // ms
+      socketList[i].RTT = 1000; // ms
       socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE;
 
       // Optionally initialize buffers to zero
@@ -559,7 +637,6 @@ implementation {
 
   // Call this function to send data on a client socket
   error_t sendData(socket_t fd) {
-    // TODO: track RTT with a timer
     socket_store_t *currSock;
     packTCP datagram;
 
@@ -641,9 +718,6 @@ implementation {
                                       payloadIP,
                                       payloadSizeTCP + sizeof(packTCP));
     createTimestamp(fd, DATA, nextSend, payloadSizeTCP);
-    if (!(call PacketTimeout.isRunning())) {
-      call PacketTimeout.startOneShot(TIMEOUT_TIMER);
-    }
 
     currSock->nextSend =
         (currSock->nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
@@ -735,7 +809,7 @@ implementation {
     currSock->nextWritten =
         (currSock->nextWritten + trueBuffLen) % SOCKET_BUFFER_SIZE;
 
-    printSockets();
+    // printSockets();
     if (currSock->flag == NO_SEND_DATA) {
       currSock->flag = newFlag;
       sendData(fd);
@@ -775,7 +849,7 @@ implementation {
             // this specific connection with the same ports and addresses?
 
             // If yes, then the SYN packet is a dupe of some sort
-            dbg(TRANSPORT_CHANNEL, "dupe syn\n");
+            dbg(TRANSPORT_CHANNEL, "dupe syn, conn established already\n");
 
             endHandlePacket();
             return;
@@ -800,10 +874,13 @@ implementation {
         if (currConn.srcAddr == srcAddr && currConn.srcPort == srcPort &&
             currConn.destPort == destPort && currConn.seq == msg->seq) {
           // is there already a connection request from this client
+          dbg(TRANSPORT_CHANNEL, "dupe syn, conn already pending\n");
           endHandlePacket();
           return;
         }
       }
+
+      printPacket(msg);
 
       newConn.srcAddr = srcAddr;
       newConn.srcPort = srcPort;
@@ -884,18 +961,15 @@ implementation {
           makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
                   ACK, currSock->nextExpected, currSock->nextSend,
                   currSock->effectiveWindow, payloadTCP, 0);
-          datagram.length = msg->length;
+          datagram.length = msgLength;
+          // datagram.length = msg->length;
 
           memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
 
-          // call InternetProtocol.sendMessage(currSock->dest.addr, 10,
-          //                                   PROTOCOL_TCP, payloadIP,
-          //                                   sizeTCP);
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP, sizeTCP);
 
-          // createTimestamp(i, ACK, currSock->nextSend + msgLength, 0);
-          // if (!(call PacketTimeout.isRunning())) {
-          //   call PacketTimeout.startOneShot(TIMEOUT_TIMER);
-          // }
+          createTimestamp(i, ACK, currSock->nextSend + msgLength, 0);
 
           removeTimestamp(i, ACK, currSock->nextSend, 0);
 
@@ -935,15 +1009,11 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
-          createTimestamp(i, FINACK, currSock->nextSend, 0);
-          if (!(call PacketTimeout.isRunning())) {
-            call PacketTimeout.startOneShot(TIMEOUT_TIMER);
-          }
-
           call ClosingQueue.pushback(i);
           if (currSock->state == ESTABLISHED) {
             // This is the initial recipient of the FIN packet
             currSock->state = CLOSE_WAIT;
+            removeTimestamp(i, ACK, currSock->nextSend, 0);
 
             // Don't worry if all the data has been read yet, the app will
             // have to set a timer if it hasn't
@@ -984,6 +1054,7 @@ implementation {
             dbg(TRANSPORT_CHANNEL,
                 "Three way handshake complete, socket %i conn established\n",
                 i);
+            printPacket(msg);
             removeTimestamp(i, SYNACK, 0, 0);
             // printSockets();
 
@@ -1000,12 +1071,24 @@ implementation {
             if (ackSeq != currSock->nextSend) {
               // This ack must be out of order or lost, either way it doesn't
               // match
+
+              // TODO: I've realized that, if the rcvd buffer of the server is
+              // temporarily full, the ack received back will not match with
+              // currSock->nextSend because nextSend assumes the entire message
+              // was put in the buffer rather than just a part. Need to fix.
               dbg(GENERAL_CHANNEL, "Invalid ACK number: %u\n", ackSeq);
               endHandlePacket();
               return;
             }
 
             dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
+            printPacket(msg);
+
+            removeTimestamp(i, DATA,
+                            (ackSeq + SOCKET_BUFFER_SIZE - msg->length) %
+                                SOCKET_BUFFER_SIZE,
+                            msg->length);
+
             // update nextAck, free up space in the sendBuffer
             currSock->nextAck = ackSeq;
 
@@ -1016,11 +1099,11 @@ implementation {
             }
 
             // Data has been acked, more can be written
-            signal Transport.bufferFreed(i);
+            // signal Transport.bufferFreed(i);
 
             // stop and wait: ack received, send next packet
             sendData(i);
-            printSockets();
+            // printSockets();
 
             endHandlePacket();
             return;
@@ -1053,6 +1136,8 @@ implementation {
           uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
           uint16_t sizeTCP = sizeof(packTCP);
 
+          printPacket(msg);
+
           // Client sends one last ACK packet to server ACKing the server's
           // ISN to complete the three way handshake
           makeTCP(&msgAck, TOS_NODE_ID, currSock->src, currSock->dest.port, ACK,
@@ -1063,12 +1148,7 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
-          // createTimestamp(i, ACK, currSock->nextSend, 0); // don't think this
-          // is necessary
           removeTimestamp(i, SYN, currSock->nextSend, 0);
-          if (!(call PacketTimeout.isRunning())) {
-            call PacketTimeout.startOneShot(TIMEOUT_TIMER);
-          }
 
           currSock->state = ESTABLISHED;
           currSock->flag = NO_SEND_DATA;
@@ -1097,12 +1177,14 @@ implementation {
             currSock->state != LISTEN) {
           if (currSock->state == FIN_WAIT_1) {
             currSock->state = FIN_WAIT_2;
+            removeTimestamp(i, FIN, currSock->nextSend, 0);
             dbg(GENERAL_CHANNEL, "FIN initiator entering FIN_WAIT_2, now "
                                  "waiting for FIN from recipient.\n");
             // wait for FIN to arrive from other node (server)
 
           } else if (currSock->state == CLOSE_WAIT) {
             // Timer before going to closed state
+            removeTimestamp(i, FIN, currSock->nextSend, 0);
             dbg(GENERAL_CHANNEL, "FIN recipient now shutting down.\n");
             if (!(call WaitClose.isRunning())) {
               call WaitClose.startOneShot(CLOSE_WAIT_TIME);
@@ -1352,6 +1434,7 @@ implementation {
     uint16_t sizeTCP = sizeof(packTCP);
     uint8_t payloadTCP[0];
     uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+    // return; // TODO: delete this
 
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return FAIL;
@@ -1386,9 +1469,6 @@ implementation {
                                       payloadIP, sizeTCP);
 
     createTimestamp(fd, FIN, currSock->nextSend, 0);
-    if (!(call PacketTimeout.isRunning())) {
-      call PacketTimeout.startOneShot(TIMEOUT_TIMER);
-    }
 
     return SUCCESS;
   }
