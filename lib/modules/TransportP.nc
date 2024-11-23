@@ -917,6 +917,10 @@ implementation {
           // TODO: currently the server just does nothing if the buffer is
           // full, we need to implement sliding window and make the client
           // care about the window field
+
+          // TODO: ALSO this code does not consider whether or not DATA packets
+          // may be out of order. I don't know if we have to account for that
+          // though
           if (currSock->nextRcvd >= currSock->nextRead &&
               currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
 
@@ -1076,6 +1080,8 @@ implementation {
               // temporarily full, the ack received back will not match with
               // currSock->nextSend because nextSend assumes the entire message
               // was put in the buffer rather than just a part. Need to fix.
+
+              // this may also cause other problems idk lol
               dbg(GENERAL_CHANNEL, "Invalid ACK number: %u\n", ackSeq);
               endHandlePacket();
               return;
