@@ -23,6 +23,7 @@ implementation {
     RST = 5,
     DATA = 6,
     FINACK = 7,
+    WIN = 8, // Sliding Window flag
 
     MAX_NUM_TIMESTAMPS = 30,
   };
@@ -48,6 +49,12 @@ implementation {
 
   // Checks if the handlePacket task is already posted
   bool handlingPacket = FALSE;
+
+  // Tracks if a socket has had its entire window acked. If not, then it cannot
+  // send any further packets. slidingWindowLastPacket keeps track of the last
+  // packet in the window that needs to be acked.
+  bool slidingWindowAllowSend[MAX_NUM_OF_SOCKETS];
+  uint8_t slidingWindowLastPacket[MAX_NUM_OF_SOCKETS];
 
   /*
   -------------------- CONNECTION SECTION --------------------
@@ -191,8 +198,8 @@ implementation {
       ack = currStamp->nextExpected + currStamp->length;
 
     } else if (flag == ACK) {
-      ack = currStamp->nextSend;
-      len = 0;
+      ack = currStamp->nextExpected;
+      // len = 0;
     } else if (flag == SYN) {
       ack = 0;
       len = 0;
@@ -367,8 +374,7 @@ implementation {
         if (currStamp->srcPort == currSock->src &&
             currStamp->destAddr == currSock->dest.addr &&
             currStamp->destPort == currSock->dest.port &&
-            currStamp->flag == flag && currStamp->nextSend == nextSend &&
-            currStamp->length == length) {
+            currStamp->flag == flag && currStamp->nextSend == nextSend) {
           // Check for exact packet match
 
           // Remove the timestamp
@@ -468,13 +474,14 @@ implementation {
 
       // Set RTT and window values to 0 or default
       socketList[i].RTT = 1000; // ms
-      socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE;
+      socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE - 1;
 
       // Optionally initialize buffers to zero
       memset(socketList[i].sendBuff, 0, SOCKET_BUFFER_SIZE);
       memset(socketList[i].rcvdBuff, 0, SOCKET_BUFFER_SIZE);
 
       connectionListIndex[i] = 0;
+      slidingWindowAllowSend[i] = TRUE;
     }
 
     for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
@@ -611,8 +618,7 @@ implementation {
                uint8_t window, uint8_t * payload, uint8_t length)
       */
       makeTCP(&msg, TOS_NODE_ID, socketAddr.port, newConn.srcPort, SYNACK,
-              clientISN + 1, serverISN, boundSocket->effectiveWindow,
-              payloadSYN, 0);
+              clientISN + 1, serverISN, SOCKET_BUFFER_SIZE - 1, payloadSYN, 0);
 
       memcpy(payloadIP, (void *)(&msg), sizeTCP);
 
@@ -652,6 +658,11 @@ implementation {
 
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return FAIL;
+    }
+
+    if (!slidingWindowAllowSend[fd]) {
+      // do not send any data until the final packet has been acked
       return FAIL;
     }
 
@@ -867,7 +878,6 @@ implementation {
         endHandlePacket();
         return;
       }
-      // dbg(TRANSPORT_CHANNEL, "syn still valid with fd %i\n", fd);
 
       for (i = 0; i < getQueueSize(fd); i++) {
         connection_t currConn = connectionList[fd][i];
@@ -914,13 +924,22 @@ implementation {
           uint8_t msgLength = msg->length;
           dbg(GENERAL_CHANNEL, "DATA packet received\n");
 
+          if (msg->seq != currSock->nextExpected) {
+            // Is this an out-of-order DATA packet? If so, do nothing
+            dbg(GENERAL_CHANNEL,
+                "DATA packet out of order! Expected: %u. Received: %u\n",
+                currSock->nextExpected, msg->seq);
+            endHandlePacket();
+            return;
+          }
+
           // TODO: currently the server just does nothing if the buffer is
           // full, we need to implement sliding window and make the client
           // care about the window field
 
-          // TODO: ALSO this code does not consider whether or not DATA packets
-          // may be out of order. I don't know if we have to account for that
-          // though
+          // TODO: ALSO this code does not consider whether or not DATA
+          // packets may be out of order. I don't know if we have to account
+          // for that though
           if (currSock->nextRcvd >= currSock->nextRead &&
               currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
 
@@ -973,7 +992,7 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
-          createTimestamp(i, ACK, currSock->nextSend + msgLength, 0);
+          createTimestamp(i, ACK, currSock->nextSend + msgLength, msgLength);
 
           removeTimestamp(i, ACK, currSock->nextSend, 0);
 
@@ -1082,7 +1101,8 @@ implementation {
               // was put in the buffer rather than just a part. Need to fix.
 
               // this may also cause other problems idk lol
-              dbg(GENERAL_CHANNEL, "Invalid ACK number: %u\n", ackSeq);
+              dbg(GENERAL_CHANNEL, "Invalid ACK number: %u. Expected: %u\n",
+                  ackSeq, currSock->nextSend);
               endHandlePacket();
               return;
             }
@@ -1105,7 +1125,7 @@ implementation {
             }
 
             // Data has been acked, more can be written
-            // signal Transport.bufferFreed(i);
+            signal Transport.bufferFreed(i);
 
             // stop and wait: ack received, send next packet
             sendData(i);
@@ -1159,6 +1179,8 @@ implementation {
           currSock->state = ESTABLISHED;
           currSock->flag = NO_SEND_DATA;
           currSock->nextExpected = msg->seq; // client tracks server's seq
+          currSock->effectiveWindow =
+              msg->window; // client tracks server's window size
 
           signal Transport.connectionSuccess(i);
           // printSockets();
