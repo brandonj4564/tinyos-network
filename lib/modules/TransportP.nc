@@ -23,7 +23,9 @@ implementation {
     RST = 5,
     DATA = 6,
     FINACK = 7,
+    // TODO: use the WIN flags
     WIN = 8, // Sliding Window flag
+    WINACK = 9,
 
     MAX_NUM_TIMESTAMPS = 30,
   };
@@ -655,6 +657,8 @@ implementation {
     uint8_t nextSend;
     uint8_t nextWritten;
     uint8_t nextAck;
+    uint8_t effectiveWindow;
+    uint8_t nextExpected;
 
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
@@ -680,58 +684,86 @@ implementation {
     // Stop and wait, only send one packet at a time
     // TODO: make sliding window
 
-    nextSend = currSock->nextSend;
+    effectiveWindow = currSock->effectiveWindow;
     nextWritten = currSock->nextWritten;
     nextAck = currSock->nextAck;
+    nextExpected = currSock->nextExpected;
 
-    // This if statement is checking if there is enough written data to fill an
-    // entire packet, otherwise fill up the packet enough until nextSend =
-    // nextWritten
-    if (nextSend < nextWritten && nextWritten > nextAck &&
-        nextSend + payloadSizeTCP >= nextWritten) {
-      // Not enough written data to fill payload, limit payloadSizeTCP
-      payloadSizeTCP = nextWritten - nextSend;
-
-    } else if (nextWritten < nextAck) {
-      // Buffer has wrapped around
-      // {||||||nextWritten       nextAck||||||}
-      if (nextSend > nextWritten &&
-          nextSend + payloadSizeTCP >= SOCKET_BUFFER_SIZE &&
-          (nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE >= nextWritten) {
-        // nextSend hasn't wrapped around yet, but will exceed nextWritten when
-        // it does wrap
-        payloadSizeTCP = (SOCKET_BUFFER_SIZE - nextSend) + nextWritten;
-      } else if (nextSend < nextWritten &&
-                 nextSend + payloadSizeTCP >= nextWritten) {
-        payloadSizeTCP = nextWritten - nextSend;
+    while (effectiveWindow > 0) {
+      // Resend data until the effective window is full or there is no more data
+      // to send
+      nextSend = currSock->nextSend;
+      payloadSizeTCP =
+          PACKET_MAX_PAYLOAD_SIZE - sizeof(packTCP) - sizeof(packIP);
+      if (effectiveWindow < payloadSizeTCP) {
+        // limit the payload to the effective window size
+        payloadSizeTCP = effectiveWindow;
       }
+
+      if (nextSend == nextWritten) {
+        // Not enough data in the send buffer to fill the entire window, so
+        // break out of the loop early
+        break;
+      }
+
+      // This if statement is checking if there is enough written data to fill
+      // an entire packet, otherwise fill up the packet enough until nextSend =
+      // nextWritten
+      if (nextSend < nextWritten && nextWritten > nextAck &&
+          nextSend + payloadSizeTCP >= nextWritten) {
+        // Not enough written data to fill payload, limit payloadSizeTCP
+        payloadSizeTCP = nextWritten - nextSend;
+
+      } else if (nextWritten < nextAck) {
+        // Buffer has wrapped around
+        // {||||||nextWritten       nextAck||||||}
+        if (nextSend > nextWritten &&
+            nextSend + payloadSizeTCP >= SOCKET_BUFFER_SIZE &&
+            (nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE >= nextWritten) {
+          // nextSend hasn't wrapped around yet, but will exceed nextWritten
+          // when it does wrap
+          payloadSizeTCP = (SOCKET_BUFFER_SIZE - nextSend) + nextWritten;
+        } else if (nextSend < nextWritten &&
+                   nextSend + payloadSizeTCP >= nextWritten) {
+          payloadSizeTCP = nextWritten - nextSend;
+        }
+      }
+
+      sendBuff = currSock->sendBuff;
+      // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
+      for (i = 0; i < payloadSizeTCP; i++) {
+        // Sequence number is the start of the data read
+        payloadTCP[i] = sendBuff[(nextSend + i) % SOCKET_BUFFER_SIZE];
+      }
+
+      nextExpected = (nextExpected + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
+
+      /*
+      void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
+                 uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
+                 uint8_t window, uint8_t * payload, uint8_t length)
+      */
+      makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, DATA,
+              nextExpected, nextSend, 0, payloadTCP, payloadSizeTCP);
+
+      memcpy(payloadIP, (void *)(&datagram), payloadSizeTCP + sizeof(packTCP));
+
+      call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
+                                        payloadIP,
+                                        payloadSizeTCP + sizeof(packTCP));
+      createTimestamp(fd, DATA, nextSend, payloadSizeTCP);
+
+      slidingWindowLastPacket[fd] = nextSend;
+      currSock->nextSend =
+          (currSock->nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
+
+      // Some of the effective window has been filled by the sent packet
+      effectiveWindow = effectiveWindow - payloadSizeTCP;
     }
 
-    sendBuff = currSock->sendBuff;
-    // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
-    for (i = 0; i < payloadSizeTCP; i++) {
-      // Sequence number is the start of the data read
-      payloadTCP[i] = sendBuff[(nextSend + i) % SOCKET_BUFFER_SIZE];
-    }
+    // Disallow sending more packets until this group of packets is fully acked
+    slidingWindowAllowSend[fd] = FALSE;
 
-    /*
-    void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
-               uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
-               uint8_t window, uint8_t * payload, uint8_t length)
-    */
-    makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, DATA,
-            currSock->nextExpected + payloadSizeTCP, currSock->nextSend, 0,
-            payloadTCP, payloadSizeTCP);
-
-    memcpy(payloadIP, (void *)(&datagram), payloadSizeTCP + sizeof(packTCP));
-
-    call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
-                                      payloadIP,
-                                      payloadSizeTCP + sizeof(packTCP));
-    createTimestamp(fd, DATA, nextSend, payloadSizeTCP);
-
-    currSock->nextSend =
-        (currSock->nextSend + payloadSizeTCP) % SOCKET_BUFFER_SIZE;
     return SUCCESS;
   }
 
@@ -925,10 +957,34 @@ implementation {
           dbg(GENERAL_CHANNEL, "DATA packet received\n");
 
           if (msg->seq != currSock->nextExpected) {
-            // Is this an out-of-order DATA packet? If so, do nothing
+            // Is this an out-of-order DATA packet? If so, send an ack but don't
+            // make any changes to the socket
             dbg(GENERAL_CHANNEL,
                 "DATA packet out of order! Expected: %u. Received: %u\n",
                 currSock->nextExpected, msg->seq);
+
+            makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
+                    ACK, (msg->seq + msgLength) % SOCKET_BUFFER_SIZE,
+                    currSock->nextSend, currSock->effectiveWindow, payloadTCP,
+                    0);
+            datagram.length = msgLength;
+
+            memcpy(payloadIP, (void *)(&datagram), sizeTCP + sizeof(packTCP));
+
+            call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                              PROTOCOL_TCP, payloadIP, sizeTCP);
+
+            // I THINK it MIGHT be fine to not create timestamps for ACKS for
+            // out of order DATA packets... maybe. But it's really scary and
+            // annoying to mess with it so I won't.
+
+            // createTimestamp(i, ACK, currSock->nextSend + msgLength,
+            // msgLength);
+
+            // removeTimestamp(i, ACK, currSock->nextSend, 0);
+
+            // currSock->nextSend = currSock->nextSend + msgLength;
+
             endHandlePacket();
             return;
           }
@@ -937,9 +993,6 @@ implementation {
           // full, we need to implement sliding window and make the client
           // care about the window field
 
-          // TODO: ALSO this code does not consider whether or not DATA
-          // packets may be out of order. I don't know if we have to account
-          // for that though
           if (currSock->nextRcvd >= currSock->nextRead &&
               currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
 
@@ -1087,22 +1140,25 @@ implementation {
           } else if (currSock->state == ESTABLISHED) {
             // This code will be executed by the client
             uint8_t ackSeq = msg->ack;
-            // uint8_t numAckedBytes = msg->length;
+            uint8_t prevPacketNextSend =
+                (ackSeq + SOCKET_BUFFER_SIZE - msg->length) %
+                SOCKET_BUFFER_SIZE;
 
             // Check if ackSeq is what we expect
             // ackSeq must be equal to nextSend to count that packet as acked
-            if (ackSeq != currSock->nextSend) {
+            if (prevPacketNextSend != currSock->nextAck) {
               // This ack must be out of order or lost, either way it doesn't
               // match
 
-              // TODO: I've realized that, if the rcvd buffer of the server is
-              // temporarily full, the ack received back will not match with
+              // TODO: I've realized that, if the rcvd buffer of the server
+              // is temporarily full, the ack received back will not match with
               // currSock->nextSend because nextSend assumes the entire message
               // was put in the buffer rather than just a part. Need to fix.
 
               // this may also cause other problems idk lol
               dbg(GENERAL_CHANNEL, "Invalid ACK number: %u. Expected: %u\n",
-                  ackSeq, currSock->nextSend);
+                  ackSeq,
+                  (currSock->nextAck + msg->length) % SOCKET_BUFFER_SIZE);
               endHandlePacket();
               return;
             }
@@ -1110,13 +1166,11 @@ implementation {
             dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
             printPacket(msg);
 
-            removeTimestamp(i, DATA,
-                            (ackSeq + SOCKET_BUFFER_SIZE - msg->length) %
-                                SOCKET_BUFFER_SIZE,
-                            msg->length);
+            removeTimestamp(i, DATA, prevPacketNextSend, msg->length);
 
             // update nextAck, free up space in the sendBuffer
             currSock->nextAck = ackSeq;
+            currSock->effectiveWindow = msg->window;
 
             if (currSock->nextWritten == ackSeq) {
               currSock->flag = NO_SEND_DATA;
@@ -1127,16 +1181,21 @@ implementation {
             // Data has been acked, more can be written
             signal Transport.bufferFreed(i);
 
-            // stop and wait: ack received, send next packet
+            if (prevPacketNextSend == slidingWindowLastPacket[i]) {
+              // entire group of packets has been acked, we can send more
+              dbg(GENERAL_CHANNEL,
+                  "Last packet %u acked, new sliding window can be sent!\n",
+                  prevPacketNextSend);
+              slidingWindowAllowSend[i] = TRUE;
+            }
             sendData(i);
             // printSockets();
 
             endHandlePacket();
             return;
-
           } else {
-            // ACK packets should only be received when the state is SYN_RCVD
-            // or ESTABLISHED
+            // ACK packets should only be received when the state is
+            // SYN_RCVD or ESTABLISHED
             endHandlePacket();
             return;
           }
@@ -1145,7 +1204,6 @@ implementation {
 
       endHandlePacket();
       return;
-
     } else if (flag == SYNACK) {
       for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
         socket_store_t *currSock = &(socketList[i]);
@@ -1191,7 +1249,6 @@ implementation {
 
       endHandlePacket();
       return;
-
     } else if (flag == RST) {
       // RST requires a hard close
       call Transport.release(2);
@@ -1336,6 +1393,7 @@ implementation {
 
     currSock->nextRead =
         (currSock->nextRead + trueBuffLen) % SOCKET_BUFFER_SIZE;
+    currSock->effectiveWindow = currSock->effectiveWindow + trueBuffLen;
 
     return trueBuffLen;
   }
