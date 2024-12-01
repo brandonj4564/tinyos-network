@@ -79,12 +79,12 @@ implementation {
     uint16_t i;
 
     for (i = 0; i < getQueueSize(fd); i++) {
-      dbg(GENERAL_CHANNEL, "-------NEW CONNECTION-------\n");
-      dbg(GENERAL_CHANNEL, "connection src addr: %u\n",
+      dbg(TRANSPORT_CHANNEL, "-------NEW CONNECTION-------\n");
+      dbg(TRANSPORT_CHANNEL, "connection src addr: %u\n",
           connectionList[fd][i].srcAddr);
-      dbg(GENERAL_CHANNEL, "connection src port: %u\n",
+      dbg(TRANSPORT_CHANNEL, "connection src port: %u\n",
           connectionList[fd][i].srcPort);
-      dbg(GENERAL_CHANNEL, "connection dest port: %u\n",
+      dbg(TRANSPORT_CHANNEL, "connection dest port: %u\n",
           connectionList[fd][i].destPort);
     }
   }
@@ -125,11 +125,11 @@ implementation {
       (connectionList[fd][ind]).destPort = connection.destPort;
       (connectionList[fd][ind]).seq = connection.seq;
 
-      // dbg(GENERAL_CHANNEL, "pushback connection src addr: %u\n",
+      // dbg(TRANSPORT_CHANNEL, "pushback connection src addr: %u\n",
       //     connectionList[fd][ind].srcAddr);
-      // dbg(GENERAL_CHANNEL, "pushback connection src port: %u\n",
+      // dbg(TRANSPORT_CHANNEL, "pushback connection src port: %u\n",
       //     connectionList[fd][ind].srcPort);
-      // dbg(GENERAL_CHANNEL, "pushback connection dest port: %u\n",
+      // dbg(TRANSPORT_CHANNEL, "pushback connection dest port: %u\n",
       //     connectionList[fd][ind].destPort);
 
       connectionListIndex[fd] = connectionListIndex[fd] + 1;
@@ -161,7 +161,7 @@ implementation {
     currSock->RTT = smoothingFactor * (timeNow - timeSent) +
                     (1 - smoothingFactor) * currSock->RTT;
 
-    dbg(GENERAL_CHANNEL, "Socket %u new RTT: %u\n", fd, currSock->RTT);
+    dbg(TRANSPORT_CHANNEL, "Socket %u new RTT: %u\n", fd, currSock->RTT);
 
     return SUCCESS;
   }
@@ -238,7 +238,7 @@ implementation {
       uint8_t i;
 
       sendBuff = (&socketList[currStamp->fd])->sendBuff;
-      // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
+      // dbg(TRANSPORT_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
       for (i = 0; i < payloadSizeTCP; i++) {
         // Sequence number is the start of the data read
         payloadTCP[i] = sendBuff[(nextSend + i) % SOCKET_BUFFER_SIZE];
@@ -263,20 +263,20 @@ implementation {
       // actually maybe this doesn't even need a resend
     }
 
-    dbg(GENERAL_CHANNEL, "---------RESENDING TIMESTAMP---------\n");
-    dbg(GENERAL_CHANNEL, "socket: %u\n", currStamp->fd);
-    dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currStamp->srcPort);
-    dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currStamp->destAddr);
-    dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currStamp->destPort);
-    dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
-    dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
-    dbg(GENERAL_CHANNEL, "TS length: %u\n", len);
+    dbg(TRANSPORT_CHANNEL, "---------RESENDING TIMESTAMP---------\n");
+    dbg(TRANSPORT_CHANNEL, "socket: %u\n", currStamp->fd);
+    dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currStamp->srcPort);
+    dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currStamp->destAddr);
+    dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currStamp->destPort);
+    dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+    dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
+    dbg(TRANSPORT_CHANNEL, "TS length: %u\n", len);
 
-    // dbg(GENERAL_CHANNEL, "socket: %u | srcPort: %u | destAddr: % u\n",
+    // dbg(TRANSPORT_CHANNEL, "socket: %u | srcPort: %u | destAddr: % u\n",
     //     currStamp->fd, currStamp->srcPort, currStamp->destAddr);
-    // dbg(GENERAL_CHANNEL, "destPort: %u | flag: %u | nextSend: %u\n",
+    // dbg(TRANSPORT_CHANNEL, "destPort: %u | flag: %u | nextSend: %u\n",
     //     currStamp->destPort, flag, currStamp->nextSend);
-    // dbg(GENERAL_CHANNEL, "length: %u\n", length);
+    // dbg(TRANSPORT_CHANNEL, "length: %u\n", length);
 
     makeTCP(&msg, TOS_NODE_ID, currStamp->srcPort, currStamp->destPort,
             currStamp->flag, ack, currStamp->nextSend,
@@ -291,12 +291,13 @@ implementation {
   }
 
   void printPacket(packTCP * msg) {
-    dbg(GENERAL_CHANNEL, "----------NEW PACKET----------\n");
-    dbg(GENERAL_CHANNEL, "srcAddr: %u | srcPort: %u | destPort: %u\n",
+    dbg(TRANSPORT_CHANNEL, "----------NEW PACKET----------\n");
+    dbg(TRANSPORT_CHANNEL, "srcAddr: %u | srcPort: %u | destPort: %u\n",
         msg->srcAddr, msg->srcPort, msg->destPort);
-    dbg(GENERAL_CHANNEL, "seq: %u | ack: %u | flag: %u\n", msg->seq, msg->ack,
+    dbg(TRANSPORT_CHANNEL, "seq: %u | ack: %u | flag: %u\n", msg->seq, msg->ack,
         msg->flag);
-    dbg(GENERAL_CHANNEL, "window: %u | length: %u\n", msg->window, msg->length);
+    dbg(TRANSPORT_CHANNEL, "window: %u | length: %u\n", msg->window,
+        msg->length);
   }
 
   task void handlePacketTimeout() {
@@ -313,13 +314,13 @@ implementation {
     for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
       timestamp_t *currStamp = &timestampList[i];
       if (currStamp->bound) {
-        // dbg(GENERAL_CHANNEL, "timeNow: %u\n", timeNow);
-        // dbg(GENERAL_CHANNEL, "Packet time + RTT: %u\n",
+        // dbg(TRANSPORT_CHANNEL, "timeNow: %u\n", timeNow);
+        // dbg(TRANSPORT_CHANNEL, "Packet time + RTT: %u\n",
         //     currStamp->timeSent + socketList[currStamp->fd].RTT);
 
         if (currStamp->timeSent + socketList[currStamp->fd].RTT <= timeNow) {
           // The packet has timed out
-          // dbg(GENERAL_CHANNEL, "Packet timed out from socket %u\n",
+          // dbg(TRANSPORT_CHANNEL, "Packet timed out from socket %u\n",
           //     currStamp->fd);
 
           resendPacket(currStamp);
@@ -331,7 +332,7 @@ implementation {
       timestampEmpty = TRUE;
     } else {
       timestampEmpty = FALSE; // just in case
-      // dbg(GENERAL_CHANNEL, "PacketTimeout restarted\n");
+      // dbg(TRANSPORT_CHANNEL, "PacketTimeout restarted\n");
       call PacketTimeout.startOneShot(TIMEOUT_TIMER);
     }
   }
@@ -393,14 +394,14 @@ implementation {
 
     timestampEmpty = FALSE;
 
-    dbg(GENERAL_CHANNEL, "---------ADD TIMESTAMP---------\n");
-    dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
-    dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
-    dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
-    dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-    dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
-    dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
-    dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+    dbg(TRANSPORT_CHANNEL, "---------ADD TIMESTAMP---------\n");
+    dbg(TRANSPORT_CHANNEL, "TS socket: %u\n", fd);
+    dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
+    dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+    dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+    dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+    dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", nextSend);
+    dbg(TRANSPORT_CHANNEL, "TS length: %u\n", length);
 
     if (!(call PacketTimeout.isRunning())) {
       call PacketTimeout.startOneShot(TIMEOUT_TIMER);
@@ -435,27 +436,27 @@ implementation {
             timestampEmpty = TRUE;
           }
 
-          dbg(GENERAL_CHANNEL, "---------REMOVE TIMESTAMP---------\n");
-          dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
-          dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
-          dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
-          dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-          dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
-          dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
-          dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+          dbg(TRANSPORT_CHANNEL, "---------REMOVE TIMESTAMP---------\n");
+          dbg(TRANSPORT_CHANNEL, "TS socket: %u\n", fd);
+          dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
+          dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+          dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+          dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+          dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", nextSend);
+          dbg(TRANSPORT_CHANNEL, "TS length: %u\n", length);
           return SUCCESS;
         }
       }
     }
 
-    dbg(GENERAL_CHANNEL, "---------TIMESTAMP FAIL REMOVED---------\n");
-    dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
-    dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
-    dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
-    dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-    dbg(GENERAL_CHANNEL, "TS flag: %u\n", flag);
-    dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
-    dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
+    dbg(TRANSPORT_CHANNEL, "---------TIMESTAMP FAIL REMOVED---------\n");
+    dbg(TRANSPORT_CHANNEL, "TS socket: %u\n", fd);
+    dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
+    dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+    dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+    dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+    dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", nextSend);
+    dbg(TRANSPORT_CHANNEL, "TS length: %u\n", length);
     return FAIL;
   }
 
@@ -473,14 +474,14 @@ implementation {
             currStamp->destPort == currSock->dest.port) {
 
           currStamp->bound = FALSE;
-          dbg(GENERAL_CHANNEL, "---------REMOVING ALL TIMESTAMPS---------\n");
-          dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
-          dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
-          dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
-          dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-          dbg(GENERAL_CHANNEL, "TS flag: %u\n", currStamp->flag);
-          dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
-          dbg(GENERAL_CHANNEL, "TS length: %u\n", currStamp->length);
+          dbg(TRANSPORT_CHANNEL, "---------REMOVING ALL TIMESTAMPS---------\n");
+          dbg(TRANSPORT_CHANNEL, "TS socket: %u\n", fd);
+          dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
+          dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+          dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+          dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", currStamp->flag);
+          dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
+          dbg(TRANSPORT_CHANNEL, "TS length: %u\n", currStamp->length);
         }
       }
     }
@@ -749,7 +750,7 @@ implementation {
 
     if (!slidingWindowAllowSend[fd]) {
       // do not send any data until the final packet has been acked
-      // dbg(GENERAL_CHANNEL, "sendData ruined! Socket %u\n", fd);
+      // dbg(TRANSPORT_CHANNEL, "sendData ruined! Socket %u\n", fd);
       return FAIL;
     }
 
@@ -810,7 +811,7 @@ implementation {
       }
 
       sendBuff = currSock->sendBuff;
-      // dbg(GENERAL_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
+      // dbg(TRANSPORT_CHANNEL, "payloadSizeTCP: %u\n", payloadSizeTCP);
       for (i = 0; i < payloadSizeTCP; i++) {
         // Sequence number is the start of the data read
         payloadTCP[i] = sendBuff[(nextSend + i) % SOCKET_BUFFER_SIZE];
@@ -892,9 +893,9 @@ implementation {
       newFlag = BUFFER_FULL;
     }
 
-    // dbg(GENERAL_CHANNEL, "trueBuffLen before if: %u\n", trueBuffLen);
-    // dbg(GENERAL_CHANNEL, "nextWritten: %u\n", nextWritten);
-    // dbg(GENERAL_CHANNEL, "nextAck: %u\n", nextAck);
+    // dbg(TRANSPORT_CHANNEL, "trueBuffLen before if: %u\n", trueBuffLen);
+    // dbg(TRANSPORT_CHANNEL, "nextWritten: %u\n", nextWritten);
+    // dbg(TRANSPORT_CHANNEL, "nextAck: %u\n", nextAck);
 
     if (nextWritten >= nextAck &&
         nextWritten + trueBuffLen > SOCKET_BUFFER_SIZE) {
@@ -922,7 +923,7 @@ implementation {
       trueBuffLen = trueBuffLen - overflow;
       newFlag = BUFFER_FULL;
     }
-    dbg(GENERAL_CHANNEL, "trueBuffLen after if: %u\n", trueBuffLen);
+    dbg(TRANSPORT_CHANNEL, "trueBuffLen after if: %u\n", trueBuffLen);
 
     sendBuff = currSock->sendBuff;
     for (i = 0; i < trueBuffLen; i++) {
@@ -1034,12 +1035,12 @@ implementation {
 
           uint8_t *rcvdBuff = currSock->rcvdBuff;
           uint8_t msgLength = msg->length;
-          dbg(GENERAL_CHANNEL, "DATA packet received\n");
+          dbg(TRANSPORT_CHANNEL, "DATA packet received\n");
 
           if (msg->seq != currSock->nextExpected) {
             // Is this an out-of-order DATA packet? If so, send an ack but don't
             // make any changes to the socket
-            dbg(GENERAL_CHANNEL,
+            dbg(TRANSPORT_CHANNEL,
                 "DATA packet out of order! Expected: %u. Received: %u\n",
                 currSock->nextExpected, msg->seq);
 
@@ -1150,7 +1151,7 @@ implementation {
           uint8_t payloadTCP[0];
           uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
 
-          dbg(GENERAL_CHANNEL, "FIN packet received\n");
+          dbg(TRANSPORT_CHANNEL, "FIN packet received\n");
 
           makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
                   FINACK, currSock->nextExpected, currSock->nextSend,
@@ -1160,6 +1161,7 @@ implementation {
 
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
+          createTimestamp(i, FINACK, currSock->nextSend, 0);
 
           call ClosingQueue.pushback(i);
           if (currSock->state == ESTABLISHED) {
@@ -1232,14 +1234,14 @@ implementation {
               // was put in the buffer rather than just a part. Need to fix.
 
               // this may also cause other problems idk lol
-              dbg(GENERAL_CHANNEL, "Invalid ACK number: %u. Expected: %u\n",
+              dbg(TRANSPORT_CHANNEL, "Invalid ACK number: %u. Expected: %u\n",
                   ackSeq,
                   (currSock->nextAck + msg->length) % SOCKET_BUFFER_SIZE);
               endHandlePacket();
               return;
             }
 
-            dbg(GENERAL_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
+            dbg(TRANSPORT_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
             printPacket(msg);
 
             removeTimestamp(i, DATA, prevPacketNextSend, msg->length);
@@ -1259,7 +1261,7 @@ implementation {
 
             if (prevPacketNextSend == slidingWindowLastPacket[i]) {
               // entire group of packets has been acked, we can send more
-              dbg(GENERAL_CHANNEL,
+              dbg(TRANSPORT_CHANNEL,
                   "Last packet %u acked, new sliding window %u can be sent!\n",
                   prevPacketNextSend, i);
               slidingWindowAllowSend[i] = TRUE;
@@ -1269,9 +1271,20 @@ implementation {
 
             endHandlePacket();
             return;
+          } else if (currSock->state == CLOSE_WAIT) {
+            // This is the server, receiving the ACK for its FINACK
+            dbg(TRANSPORT_CHANNEL, "ACK for FINACK received at server.\n");
+            removeTimestamp(i, FINACK, msg->ack, 0);
+
+          } else if (currSock->state == TIME_WAIT) {
+            // This is the client after receiving the FIN from the server,
+            // receiving the ACK for its FINACK
+            dbg(TRANSPORT_CHANNEL, "ACK for FINACK received at client.\n");
+            removeTimestamp(i, FINACK, msg->ack, 0);
+
           } else {
             // ACK packets should only be received when the state is
-            // SYN_RCVD or ESTABLISHED
+            // SYN_RCVD or ESTABLISHED or one of the FIN states
             endHandlePacket();
             return;
           }
@@ -1330,23 +1343,39 @@ implementation {
       call Transport.release(2);
     } else if (flag == FINACK) {
 
-      dbg(GENERAL_CHANNEL, "FINACK arrived.\n");
+      dbg(TRANSPORT_CHANNEL, "FINACK arrived.\n");
       for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
         socket_store_t *currSock = &socketList[i];
         if (currSock->src == destPort && currSock->dest.port == srcPort &&
             currSock->dest.addr == srcAddr && currSock->bound &&
             currSock->state != LISTEN) {
+
+          // Send an ACK for the FINACK (lol)
+          packTCP datagram;
+          uint8_t payloadTCP[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+
+          makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
+                  ACK, msg->seq, currSock->nextSend, currSock->effectiveWindow,
+                  payloadTCP, 0);
+
+          memcpy(payloadIP, (void *)(&datagram), sizeof(packTCP));
+
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP,
+                                            sizeof(packTCP));
+
           if (currSock->state == FIN_WAIT_1) {
             currSock->state = FIN_WAIT_2;
             removeTimestamp(i, FIN, currSock->nextSend, 0);
-            dbg(GENERAL_CHANNEL, "FIN initiator entering FIN_WAIT_2, now "
-                                 "waiting for FIN from recipient.\n");
+            dbg(TRANSPORT_CHANNEL, "FIN initiator entering FIN_WAIT_2, now "
+                                   "waiting for FIN from recipient.\n");
             // wait for FIN to arrive from other node (server)
 
           } else if (currSock->state == CLOSE_WAIT) {
             // Timer before going to closed state
             removeTimestamp(i, FIN, currSock->nextSend, 0);
-            dbg(GENERAL_CHANNEL, "FIN recipient now shutting down.\n");
+            dbg(TRANSPORT_CHANNEL, "FIN recipient now shutting down.\n");
             if (!(call WaitClose.isRunning())) {
               call WaitClose.startOneShot(CLOSE_WAIT_TIME);
             }
@@ -1368,7 +1397,7 @@ implementation {
           uint8_t payloadTCP[0];
           uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
 
-          dbg(GENERAL_CHANNEL, "WIN packet arrived, new window size: %u\n",
+          dbg(TRANSPORT_CHANNEL, "WIN packet arrived, new window size: %u\n",
               msg->window);
           currSock->effectiveWindow = msg->window;
 
@@ -1623,7 +1652,7 @@ implementation {
   event void WaitClose.fired() {
     socket_t fd = call ClosingQueue.popfront();
     socket_store_t *currSock = &(socketList[fd]);
-    dbg(GENERAL_CHANNEL, "Socket %u is closing.\n", fd);
+    dbg(TRANSPORT_CHANNEL, "Socket %u is closing.\n", fd);
 
     // Waits for a while before setting the socket to close.
     currSock->state = CLOSED;
