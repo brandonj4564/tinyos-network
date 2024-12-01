@@ -34,6 +34,7 @@ module Node {
   // Project 3
   uses interface Transport;
   uses interface Timer<TMilli> as ClientTimer;
+  uses interface Timer<TMilli> as TestTimer;
 }
 
 implementation {
@@ -151,6 +152,20 @@ implementation {
     call Transport.accept(fd);
   }
 
+  event void TestTimer.fired() {
+    uint8_t size = 100;
+    uint8_t data[size];
+    uint8_t actualSize;
+    uint8_t i;
+
+    actualSize = call Transport.read(currSock, data, size);
+    dbg(GENERAL_CHANNEL, "Reading %u bytes of data from socket %u.\n",
+        actualSize, currSock);
+    for (i = 0; i < actualSize; i++) {
+      dbg(GENERAL_CHANNEL, "%u\n", data[i]);
+    }
+  }
+
   event void Transport.dataAvailable(socket_t fd) {
     uint8_t size = 100;
     uint8_t data[size];
@@ -163,6 +178,9 @@ implementation {
     for (i = 0; i < actualSize; i++) {
       dbg(GENERAL_CHANNEL, "%u\n", data[i]);
     }
+
+    // currSock = fd;
+    // call TestTimer.startOneShot(500);
   }
 
   event void CommandHandler.setTestServer(uint8_t port) {

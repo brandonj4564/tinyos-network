@@ -23,7 +23,6 @@ implementation {
     RST = 5,
     DATA = 6,
     FINACK = 7,
-    // TODO: use the WIN flags
     WIN = 8, // Sliding Window flag
     WINACK = 9,
 
@@ -118,6 +117,28 @@ implementation {
   socket_store_t socketList[MAX_NUM_OF_SOCKETS];
   // currentSocket is used to index socketList
   uint8_t currentSocket = 0;
+
+  error_t updateRTT(socket_t fd, uint32_t timeSent) {
+    uint32_t timeNow;
+    float smoothingFactor = 0.2;
+    socket_store_t *currSock;
+
+    if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return FAIL;
+    }
+
+    currSock = &socketList[fd];
+
+    // Update RTT based on the time it arrived, timeNow, and the time it was
+    // sent
+    timeNow = call PacketTimeout.getNow();
+    currSock->RTT = smoothingFactor * (timeNow - timeSent) +
+                    (1 - smoothingFactor) * currSock->RTT;
+
+    dbg(GENERAL_CHANNEL, "Socket %u new RTT: %u\n", fd, currSock->RTT);
+
+    return SUCCESS;
+  }
 
   /*
   -------------------- TIMESTAMP SECTION --------------------
@@ -381,6 +402,7 @@ implementation {
 
           // Remove the timestamp
           currStamp->bound = FALSE;
+          updateRTT(fd, currStamp->timeSent);
 
           if (timestampListSize() == 0) {
             // no more bound timestamps
@@ -409,6 +431,40 @@ implementation {
     dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", nextSend);
     dbg(GENERAL_CHANNEL, "TS length: %u\n", length);
     return FAIL;
+  }
+
+  error_t removeAllTimestamps(socket_t fd) {
+    socket_store_t *currSock = &socketList[fd];
+    timestamp_t *currStamp;
+    uint16_t i;
+
+    for (i = 0; i < MAX_NUM_TIMESTAMPS; i++) {
+      if (timestampList[i].bound) {
+        currStamp = &timestampList[i];
+
+        if (currStamp->srcPort == currSock->src &&
+            currStamp->destAddr == currSock->dest.addr &&
+            currStamp->destPort == currSock->dest.port) {
+
+          currStamp->bound = FALSE;
+          dbg(GENERAL_CHANNEL, "---------REMOVING ALL TIMESTAMPS---------\n");
+          dbg(GENERAL_CHANNEL, "TS socket: %u\n", fd);
+          dbg(GENERAL_CHANNEL, "TS srcPort: %u\n", currSock->src);
+          dbg(GENERAL_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
+          dbg(GENERAL_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
+          dbg(GENERAL_CHANNEL, "TS flag: %u\n", currStamp->flag);
+          dbg(GENERAL_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
+          dbg(GENERAL_CHANNEL, "TS length: %u\n", currStamp->length);
+        }
+      }
+    }
+
+    if (timestampListSize() == 0) {
+      // no more bound timestamps
+      timestampEmpty = TRUE;
+    }
+
+    return SUCCESS;
   }
 
   /*
@@ -475,7 +531,7 @@ implementation {
       socketList[i].nextExpected = 0;
 
       // Set RTT and window values to 0 or default
-      socketList[i].RTT = 1000; // ms
+      socketList[i].RTT = 300; // ms
       socketList[i].effectiveWindow = SOCKET_BUFFER_SIZE - 1;
 
       // Optionally initialize buffers to zero
@@ -667,6 +723,7 @@ implementation {
 
     if (!slidingWindowAllowSend[fd]) {
       // do not send any data until the final packet has been acked
+      // dbg(GENERAL_CHANNEL, "sendData ruined! Socket %u\n", fd);
       return FAIL;
     }
 
@@ -680,9 +737,6 @@ implementation {
       // no data to send yet the flag is not NO_SEND_DATA
       return FAIL;
     }
-
-    // Stop and wait, only send one packet at a time
-    // TODO: make sliding window
 
     effectiveWindow = currSock->effectiveWindow;
     nextWritten = currSock->nextWritten;
@@ -989,10 +1043,6 @@ implementation {
             return;
           }
 
-          // TODO: currently the server just does nothing if the buffer is
-          // full, we need to implement sliding window and make the client
-          // care about the window field
-
           if (currSock->nextRcvd >= currSock->nextRead &&
               currSock->nextRcvd + msgLength > SOCKET_BUFFER_SIZE) {
 
@@ -1184,8 +1234,8 @@ implementation {
             if (prevPacketNextSend == slidingWindowLastPacket[i]) {
               // entire group of packets has been acked, we can send more
               dbg(GENERAL_CHANNEL,
-                  "Last packet %u acked, new sliding window can be sent!\n",
-                  prevPacketNextSend);
+                  "Last packet %u acked, new sliding window %u can be sent!\n",
+                  prevPacketNextSend, i);
               slidingWindowAllowSend[i] = TRUE;
             }
             sendData(i);
@@ -1282,6 +1332,56 @@ implementation {
       }
       endHandlePacket();
       return;
+    } else if (flag == WIN) {
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &socketList[i];
+        if (currSock->src == destPort && currSock->dest.port == srcPort &&
+            currSock->dest.addr == srcAddr && currSock->bound &&
+            currSock->state != LISTEN) {
+          packTCP datagram;
+          uint8_t payloadTCP[0];
+          uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+
+          dbg(GENERAL_CHANNEL, "WIN packet arrived, new window size: %u\n",
+              msg->window);
+          currSock->effectiveWindow = msg->window;
+
+          makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port,
+                  WINACK, msg->seq, 0, currSock->effectiveWindow, payloadTCP,
+                  0);
+
+          memcpy(payloadIP, (void *)(&datagram), sizeof(packTCP));
+
+          call InternetProtocol.sendMessage(currSock->dest.addr, 10,
+                                            PROTOCOL_TCP, payloadIP,
+                                            sizeof(packTCP));
+
+          // This line SHOULD not be necessary, but for some reason,
+          // slidingWindowAllowSend[i] is false even when it should be true.
+          // I have no idea why.
+          slidingWindowAllowSend[i] = TRUE;
+
+          sendData(i);
+          endHandlePacket();
+          return;
+        }
+      }
+      endHandlePacket();
+      return;
+    } else if (flag == WINACK) {
+      for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+        socket_store_t *currSock = &socketList[i];
+        if (currSock->src == destPort && currSock->dest.port == srcPort &&
+            currSock->dest.addr == srcAddr && currSock->bound &&
+            currSock->state != LISTEN) {
+
+          removeTimestamp(i, WIN, msg->ack, 0);
+          endHandlePacket();
+          return;
+        }
+      }
+      endHandlePacket();
+      return;
     }
 
     endHandlePacket();
@@ -1347,6 +1447,7 @@ implementation {
     uint8_t nextRead;
     uint8_t nextRcvd;
     uint8_t *rcvdBuff;
+    bool sendWindowPacket = FALSE;
 
     uint16_t i;
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
@@ -1367,6 +1468,12 @@ implementation {
       // cap the buff len
       trueBuffLen = SOCKET_BUFFER_SIZE - 1;
       currSock->flag = NO_RCVD_DATA;
+    }
+
+    if ((nextRcvd + 1) % SOCKET_BUFFER_SIZE == nextRead) {
+      // This means the read buffer is completely full, so we need to send the
+      // client a WIN packet notifying the window size has changed
+      sendWindowPacket = TRUE;
     }
 
     if (nextRcvd > nextRead && nextRead + trueBuffLen >= nextRcvd) {
@@ -1394,6 +1501,22 @@ implementation {
     currSock->nextRead =
         (currSock->nextRead + trueBuffLen) % SOCKET_BUFFER_SIZE;
     currSock->effectiveWindow = currSock->effectiveWindow + trueBuffLen;
+
+    if (sendWindowPacket) {
+      packTCP datagram;
+      uint8_t payloadTCP[0];
+      uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
+
+      makeTCP(&datagram, TOS_NODE_ID, currSock->src, currSock->dest.port, WIN,
+              0, currSock->nextSend, currSock->effectiveWindow, payloadTCP, 0);
+
+      memcpy(payloadIP, (void *)(&datagram), sizeof(packTCP));
+
+      call InternetProtocol.sendMessage(currSock->dest.addr, 10, PROTOCOL_TCP,
+                                        payloadIP, sizeof(packTCP));
+
+      createTimestamp(fd, WIN, currSock->nextSend, 0);
+    }
 
     return trueBuffLen;
   }
@@ -1497,6 +1620,8 @@ implementation {
     memset(currSock->sendBuff, 0, SOCKET_BUFFER_SIZE);
     memset(currSock->rcvdBuff, 0, SOCKET_BUFFER_SIZE);
 
+    removeAllTimestamps(fd);
+
     printSockets();
 
     if (call ClosingQueue.size() > 0) {
@@ -1520,7 +1645,6 @@ implementation {
     uint16_t sizeTCP = sizeof(packTCP);
     uint8_t payloadTCP[0];
     uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
-    // return; // TODO: delete this
 
     if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
       return FAIL;

@@ -49,4 +49,7 @@ implementation {
 
   components new TimerMilliC() as ClientTimer;
   Node.ClientTimer->ClientTimer;
+
+  components new TimerMilliC() as TestTimer;
+  Node.TestTimer->TestTimer;
 }
