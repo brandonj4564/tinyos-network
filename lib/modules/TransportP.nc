@@ -67,28 +67,47 @@ implementation {
 
   // These functions have to be reimplemented because each LISTEN socket needs
   // its own queue
-  connection_t popFrontConnection(socket_t fd) {
-    connection_t returnVal;
-    uint16_t i;
-    uint16_t size = connectionListIndex[fd];
-
-    returnVal = connectionList[fd][0];
-    if (size > 0) {
-      // Move everything to the left.
-      for (i = 0; i < size - 1; i++) {
-        connectionList[fd][i] = connectionList[fd][i + 1];
-      }
-      size--;
-    }
-
-    return returnVal;
-  }
 
   int getQueueSize(socket_t fd) {
     if (fd >= 0 && fd < MAX_NUM_OF_SOCKETS) {
       return connectionListIndex[fd];
     }
     return NULL_SOCKET;
+  }
+
+  void printConnectionList(socket_t fd) {
+    uint16_t i;
+
+    for (i = 0; i < getQueueSize(fd); i++) {
+      dbg(GENERAL_CHANNEL, "-------NEW CONNECTION-------\n");
+      dbg(GENERAL_CHANNEL, "connection src addr: %u\n",
+          connectionList[fd][i].srcAddr);
+      dbg(GENERAL_CHANNEL, "connection src port: %u\n",
+          connectionList[fd][i].srcPort);
+      dbg(GENERAL_CHANNEL, "connection dest port: %u\n",
+          connectionList[fd][i].destPort);
+    }
+  }
+
+  connection_t popFrontConnection(socket_t fd) {
+    connection_t returnVal;
+    uint16_t i;
+    uint16_t size = getQueueSize(fd);
+    // printConnectionList(fd);
+
+    returnVal = connectionList[fd][0];
+    if (size > 0 && size != NULL_SOCKET) {
+      // Move everything to the left.
+      for (i = 0; i < size - 1; i++) {
+        connectionList[fd][i].srcAddr = connectionList[fd][i + 1].srcAddr;
+        connectionList[fd][i].srcPort = connectionList[fd][i + 1].srcPort;
+        connectionList[fd][i].destPort = connectionList[fd][i + 1].destPort;
+        connectionList[fd][i].seq = connectionList[fd][i + 1].seq;
+      }
+      connectionListIndex[fd] = connectionListIndex[fd] - 1;
+    }
+
+    return returnVal;
   }
 
   connection_t front(socket_t fd) { return connectionList[fd][0]; }
@@ -105,6 +124,13 @@ implementation {
       (connectionList[fd][ind]).srcPort = connection.srcPort;
       (connectionList[fd][ind]).destPort = connection.destPort;
       (connectionList[fd][ind]).seq = connection.seq;
+
+      // dbg(GENERAL_CHANNEL, "pushback connection src addr: %u\n",
+      //     connectionList[fd][ind].srcAddr);
+      // dbg(GENERAL_CHANNEL, "pushback connection src port: %u\n",
+      //     connectionList[fd][ind].srcPort);
+      // dbg(GENERAL_CHANNEL, "pushback connection dest port: %u\n",
+      //     connectionList[fd][ind].destPort);
 
       connectionListIndex[fd] = connectionListIndex[fd] + 1;
     }
