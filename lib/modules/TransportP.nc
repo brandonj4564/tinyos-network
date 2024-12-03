@@ -29,6 +29,90 @@ implementation {
     MAX_NUM_TIMESTAMPS = 30,
   };
 
+  void printSocketFlag(char *str, uint8_t flag) {
+    switch (flag) {
+    case UNINIT:
+      dbg(TRANSPORT_CHANNEL, "%sUNINIT\n", str);
+      return;
+    case NO_SEND_DATA:
+      dbg(TRANSPORT_CHANNEL, "%sNO_SEND_DATA\n", str);
+      return;
+    case NO_RCVD_DATA:
+      dbg(TRANSPORT_CHANNEL, "%sNO_RCVD_DATA\n", str);
+      return;
+    case BUFFER_FULL:
+      dbg(TRANSPORT_CHANNEL, "%sBUFFER_FULL\n", str);
+      return;
+    case DATA_AVAIL:
+      dbg(TRANSPORT_CHANNEL, "%sDATA_AVAIL\n", str);
+      return;
+    }
+  }
+
+  void printSocketState(char *str, uint8_t flag) {
+    switch (flag) {
+    case CLOSED:
+      dbg(TRANSPORT_CHANNEL, "%sCLOSED\n", str);
+      return;
+    case LISTEN:
+      dbg(TRANSPORT_CHANNEL, "%sLISTEN\n", str);
+      return;
+    case ESTABLISHED:
+      dbg(TRANSPORT_CHANNEL, "%sESTABLISHED\n", str);
+      return;
+    case SYN_SENT:
+      dbg(TRANSPORT_CHANNEL, "%sSYN_SENT\n", str);
+      return;
+    case SYN_RCVD:
+      dbg(TRANSPORT_CHANNEL, "%sSYN_RCVD\n", str);
+      return;
+    case FIN_WAIT_1:
+      dbg(TRANSPORT_CHANNEL, "%sFIN_WAIT_1\n", str);
+      return;
+    case FIN_WAIT_2:
+      dbg(TRANSPORT_CHANNEL, "%sFIN_WAIT_2\n", str);
+      return;
+    case CLOSE_WAIT:
+      dbg(TRANSPORT_CHANNEL, "%sCLOSE_WAIT\n", str);
+      return;
+    case TIME_WAIT:
+      dbg(TRANSPORT_CHANNEL, "%sTIME_WAIT\n", str);
+      return;
+    }
+  }
+
+  void printPacketFlag(char *str, uint8_t flag) {
+    switch (flag) {
+    case SYN:
+      dbg(TRANSPORT_CHANNEL, "%sSYN\n", str);
+      return;
+    case ACK:
+      dbg(TRANSPORT_CHANNEL, "%sACK\n", str);
+      return;
+    case SYNACK:
+      dbg(TRANSPORT_CHANNEL, "%sSYNACK\n", str);
+      return;
+    case FIN:
+      dbg(TRANSPORT_CHANNEL, "%sFIN\n", str);
+      return;
+    case RST:
+      dbg(TRANSPORT_CHANNEL, "%sRST\n", str);
+      return;
+    case DATA:
+      dbg(TRANSPORT_CHANNEL, "%sDATA\n", str);
+      return;
+    case FINACK:
+      dbg(TRANSPORT_CHANNEL, "%sFINACK\n", str);
+      return;
+    case WIN:
+      dbg(TRANSPORT_CHANNEL, "%sWIN\n", str);
+      return;
+    case WINACK:
+      dbg(TRANSPORT_CHANNEL, "%sWINACK\n", str);
+      return;
+    }
+  }
+
   void makeTCP(packTCP * Package, uint8_t srcAddr, uint8_t srcPort,
                uint8_t destPort, uint8_t flag, uint8_t ack, uint8_t seq,
                uint8_t window, uint8_t * payload, uint8_t length) {
@@ -193,7 +277,7 @@ implementation {
   timestamp_t timestampList[MAX_NUM_TIMESTAMPS];
   uint16_t timestampIndex = 0;
   bool timestampEmpty = TRUE;
-  const uint16_t TIMEOUT_TIMER = 10000;
+  const uint16_t TIMEOUT_TIMER = 1500;
 
   uint16_t timestampListSize() {
     uint16_t i;
@@ -268,7 +352,7 @@ implementation {
     dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currStamp->srcPort);
     dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currStamp->destAddr);
     dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currStamp->destPort);
-    dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+    printPacketFlag("TS flag: ", flag);
     dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
     dbg(TRANSPORT_CHANNEL, "TS length: %u\n", len);
 
@@ -291,13 +375,12 @@ implementation {
   }
 
   void printPacket(packTCP * msg) {
-    dbg(TRANSPORT_CHANNEL, "----------NEW PACKET----------\n");
+    dbg(TRANSPORT_CHANNEL, "----------NEW PACKET RCVD----------\n");
+    printPacketFlag("flag: ", msg->flag);
     dbg(TRANSPORT_CHANNEL, "srcAddr: %u | srcPort: %u | destPort: %u\n",
         msg->srcAddr, msg->srcPort, msg->destPort);
-    dbg(TRANSPORT_CHANNEL, "seq: %u | ack: %u | flag: %u\n", msg->seq, msg->ack,
-        msg->flag);
-    dbg(TRANSPORT_CHANNEL, "window: %u | length: %u\n", msg->window,
-        msg->length);
+    dbg(TRANSPORT_CHANNEL, "seq: %u | ack: %u | window: %u | length: %u\n",
+        msg->seq, msg->ack, msg->window, msg->length);
   }
 
   task void handlePacketTimeout() {
@@ -399,7 +482,8 @@ implementation {
     dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
     dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
     dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-    dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+    printPacketFlag("TS flag: ", currStamp->flag);
+
     dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", nextSend);
     dbg(TRANSPORT_CHANNEL, "TS length: %u\n", length);
 
@@ -441,7 +525,7 @@ implementation {
           dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
           dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
           dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-          dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+          printPacketFlag("TS flag: ", flag);
           dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", nextSend);
           dbg(TRANSPORT_CHANNEL, "TS length: %u\n", length);
           return SUCCESS;
@@ -454,7 +538,7 @@ implementation {
     dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
     dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
     dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-    dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", flag);
+    printPacketFlag("TS flag: ", flag);
     dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", nextSend);
     dbg(TRANSPORT_CHANNEL, "TS length: %u\n", length);
     return FAIL;
@@ -479,7 +563,7 @@ implementation {
           dbg(TRANSPORT_CHANNEL, "TS srcPort: %u\n", currSock->src);
           dbg(TRANSPORT_CHANNEL, "TS destAddr: %u\n", currSock->dest.addr);
           dbg(TRANSPORT_CHANNEL, "TS destPort: %u\n", currSock->dest.port);
-          dbg(TRANSPORT_CHANNEL, "TS flag: %u\n", currStamp->flag);
+          printPacketFlag("TS flag: ", currStamp->flag);
           dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
           dbg(TRANSPORT_CHANNEL, "TS length: %u\n", currStamp->length);
         }
@@ -502,10 +586,10 @@ implementation {
     int i;
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       if (socketList[i].bound) {
-        dbg(TRANSPORT_CHANNEL, "-----NEW SOCKET-----\n");
+        dbg(TRANSPORT_CHANNEL, "---------SOCKET---------\n");
         dbg(TRANSPORT_CHANNEL, "Socket fd: %i\n", i);
-        dbg(TRANSPORT_CHANNEL, "Socket state: %i\n", socketList[i].state);
-        dbg(TRANSPORT_CHANNEL, "Socket flag: %i\n", socketList[i].flag);
+        printSocketState("Socket state: ", socketList[i].state);
+        printSocketFlag("Socket flag: ", socketList[i].flag);
         dbg(TRANSPORT_CHANNEL, "Socket port: %i\n", socketList[i].src);
         dbg(TRANSPORT_CHANNEL, "Socket dest addr: %i\n",
             socketList[i].dest.addr);
@@ -1055,15 +1139,6 @@ implementation {
             call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                               PROTOCOL_TCP, payloadIP, sizeTCP);
 
-            // I THINK it MIGHT be fine to not create timestamps for ACKS for
-            // out of order DATA packets... maybe. But it's really scary and
-            // annoying to mess with it so I won't.
-
-            // createTimestamp(i, ACK, currSock->nextSend + msgLength,
-            // msgLength);
-
-            // removeTimestamp(i, ACK, currSock->nextSend, 0);
-
             // currSock->nextSend = currSock->nextSend + msgLength;
 
             endHandlePacket();
@@ -1122,10 +1197,6 @@ implementation {
           call InternetProtocol.sendMessage(currSock->dest.addr, 10,
                                             PROTOCOL_TCP, payloadIP, sizeTCP);
 
-          createTimestamp(i, ACK, currSock->nextSend + msgLength, msgLength);
-
-          removeTimestamp(i, ACK, currSock->nextSend, 0);
-
           // TODO: Is this line below correct?
           currSock->nextSend = currSock->nextSend + msgLength;
 
@@ -1167,7 +1238,6 @@ implementation {
           if (currSock->state == ESTABLISHED) {
             // This is the initial recipient of the FIN packet
             currSock->state = CLOSE_WAIT;
-            removeTimestamp(i, ACK, currSock->nextSend, 0);
 
             // Don't worry if all the data has been read yet, the app will
             // have to set a timer if it hasn't

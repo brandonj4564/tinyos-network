@@ -148,8 +148,8 @@ def main():
     s = TestSim();
     s.runTime(10);
     s.loadTopo("example.topo");
-    # s.loadNoise("no_noise.txt");
-    s.loadNoise("meyer-heavy.txt");
+    s.loadNoise("no_noise.txt");
+    # s.loadNoise("meyer-heavy.txt");
 
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
@@ -162,12 +162,10 @@ def main():
     # def cmdTestClient(self, node, dest, srcPort, destPort, transfer)
     s.cmdTestServer(3, 10); # Node 3, port 10 socket listener
     s.runTime(1);
-    s.cmdTestClient(2, 3, 20, 10, 50); # Node 2 on port 20, sends data to node 3 on port 10
+    s.cmdTestClient(2, 3, 20, 10, 10); # Node 2 on port 20, sends data to node 3 on port 10
     s.runTime(1);
-    s.cmdTestClient(9, 3, 30, 10, 40); # Node 2 on port 20, sends data to node 3 on port 10
-    s.runTime(1);
-    s.cmdTestClient(7, 3, 40, 10, 15); # Node 2 on port 20, sends data to node 3 on port 10
-    s.runTime(1);
+    # s.cmdTestClient(9, 3, 30, 10, 15); # Node 2 on port 20, sends data to node 3 on port 10
+    # s.runTime(1);
 
     s.runTime(10);
 
