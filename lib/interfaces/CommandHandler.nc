@@ -8,6 +8,7 @@ interface CommandHandler {
   event void setTestServer(uint8_t port);
   event void setTestClient(uint8_t destAddr, uint8_t srcPort, uint8_t destPort,
                            uint8_t transfer);
+  event void closeClient(uint8_t destAddr, uint8_t srcPort, uint8_t destPort);
   event void setAppServer();
   event void setAppClient();
 }

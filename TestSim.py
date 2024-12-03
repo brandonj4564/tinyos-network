@@ -18,6 +18,7 @@ class TestSim:
     CMD_ROUTE_DUMP = 3
     CMD_TEST_CLIENT = 4
     CMD_TEST_SERVER = 5
+    CMD_CLOSE_CLIENT = 6
 
     # CHANNELS - see includes/channels.h
     COMMAND_CHANNEL="command";
@@ -136,6 +137,9 @@ class TestSim:
     def cmdTestClient(self, node, dest, srcPort, destPort, transfer):
         self.sendCMD(self.CMD_TEST_CLIENT, node, "{0}{1}{2}{3}".format(chr(dest), chr(srcPort), chr(destPort), chr(transfer)));
 
+    def cmdClientClose(self, client, dest, srcPort, destPort):
+        self.sendCMD(self.CMD_CLOSE_CLIENT, client, "{0}{1}{2}".format(chr(dest), chr(srcPort), chr(destPort)));
+
     # Renamed from routeDMP to cmdRouteDMP because it says so in the document
     def cmdRouteDMP(self, destination):
         self.sendCMD(self.CMD_ROUTE_DUMP, destination, "routing command");
@@ -148,8 +152,8 @@ def main():
     s = TestSim();
     s.runTime(10);
     s.loadTopo("example.topo");
-    s.loadNoise("no_noise.txt");
-    # s.loadNoise("meyer-heavy.txt");
+    # s.loadNoise("no_noise.txt");
+    s.loadNoise("meyer-heavy.txt");
 
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
@@ -162,12 +166,13 @@ def main():
     # def cmdTestClient(self, node, dest, srcPort, destPort, transfer)
     s.cmdTestServer(3, 10); # Node 3, port 10 socket listener
     s.runTime(1);
-    s.cmdTestClient(2, 3, 20, 10, 10); # Node 2 on port 20, sends data to node 3 on port 10
+    s.cmdTestClient(2, 3, 20, 10, 150); # Node 2 on port 20, sends data to node 3 on port 10
     s.runTime(1);
     # s.cmdTestClient(9, 3, 30, 10, 15); # Node 2 on port 20, sends data to node 3 on port 10
-    # s.runTime(1);
-
     s.runTime(10);
+    s.cmdClientClose(2, 3, 20, 10);
+    s.runTime(20);
+
 
 
 

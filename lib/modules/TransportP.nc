@@ -127,10 +127,7 @@ implementation {
     memcpy(Package->payload, payload, length);
   }
 
-  // Null socket, an invalid socket fd
-  const uint16_t NULL_SOCKET = MAX_NUM_OF_SOCKETS + 1;
-
-  const uint16_t CLOSE_WAIT_TIME = 5000; // ms
+  const uint16_t CLOSE_WAIT_TIME = 6000; // ms
 
   // Checks if the handlePacket task is already posted
   bool handlingPacket = FALSE;
@@ -277,7 +274,7 @@ implementation {
   timestamp_t timestampList[MAX_NUM_TIMESTAMPS];
   uint16_t timestampIndex = 0;
   bool timestampEmpty = TRUE;
-  const uint16_t TIMEOUT_TIMER = 1500;
+  const uint16_t TIMEOUT_TIMER = 4000;
 
   uint16_t timestampListSize() {
     uint16_t i;
@@ -356,12 +353,6 @@ implementation {
     dbg(TRANSPORT_CHANNEL, "TS nextSend: %u\n", currStamp->nextSend);
     dbg(TRANSPORT_CHANNEL, "TS length: %u\n", len);
 
-    // dbg(TRANSPORT_CHANNEL, "socket: %u | srcPort: %u | destAddr: % u\n",
-    //     currStamp->fd, currStamp->srcPort, currStamp->destAddr);
-    // dbg(TRANSPORT_CHANNEL, "destPort: %u | flag: %u | nextSend: %u\n",
-    //     currStamp->destPort, flag, currStamp->nextSend);
-    // dbg(TRANSPORT_CHANNEL, "length: %u\n", length);
-
     makeTCP(&msg, TOS_NODE_ID, currStamp->srcPort, currStamp->destPort,
             currStamp->flag, ack, currStamp->nextSend,
             currStamp->effectiveWindow, payloadTCP, len);
@@ -371,11 +362,12 @@ implementation {
     call InternetProtocol.sendMessage(currStamp->destAddr, 10, PROTOCOL_TCP,
                                       payloadIP, sizeTCP + len);
 
-    currStamp->timeSent = call PacketTimeout.getNow(); // reset timesent
+    // No, no. Actually, do not reset the time sent. -Me, 2 days later
+    // currStamp->timeSent = call PacketTimeout.getNow(); // reset timesent
   }
 
   void printPacket(packTCP * msg) {
-    dbg(TRANSPORT_CHANNEL, "----------NEW PACKET RCVD----------\n");
+    dbg(TRANSPORT_CHANNEL, "----------PACKET----------\n");
     printPacketFlag("flag: ", msg->flag);
     dbg(TRANSPORT_CHANNEL, "srcAddr: %u | srcPort: %u | destPort: %u\n",
         msg->srcAddr, msg->srcPort, msg->destPort);
@@ -1041,6 +1033,8 @@ implementation {
 
     handlingPacket = TRUE;
 
+    printPacket(msg);
+
     if (flag == SYN) {
       // Sync packet, add the new connection request to the list of requests
       connection_t newConn;
@@ -1087,7 +1081,7 @@ implementation {
         }
       }
 
-      printPacket(msg);
+      // printPacket(msg);
 
       newConn.srcAddr = srcAddr;
       newConn.srcPort = srcPort;
@@ -1278,7 +1272,7 @@ implementation {
             dbg(TRANSPORT_CHANNEL,
                 "Three way handshake complete, socket %i conn established\n",
                 i);
-            printPacket(msg);
+            // printPacket(msg);
             removeTimestamp(i, SYNACK, 0, 0);
             // printSockets();
 
@@ -1312,7 +1306,7 @@ implementation {
             }
 
             dbg(TRANSPORT_CHANNEL, "ACK FOR DATA RCVD! ACK: %u\n", ackSeq);
-            printPacket(msg);
+            // printPacket(msg);
 
             removeTimestamp(i, DATA, prevPacketNextSend, msg->length);
 
@@ -1379,7 +1373,7 @@ implementation {
           uint8_t payloadIP[PACKET_MAX_PAYLOAD_SIZE];
           uint16_t sizeTCP = sizeof(packTCP);
 
-          printPacket(msg);
+          // printPacket(msg);
 
           // Client sends one last ACK packet to server ACKing the server's
           // ISN to complete the three way handshake
@@ -1753,6 +1747,30 @@ implementation {
       // If there are other sockets in the queue to be closed
       call WaitClose.startOneShot(CLOSE_WAIT_TIME);
     }
+  }
+
+  command uint8_t Transport.getSocketFD(uint8_t destAddr, uint8_t srcPort,
+                                        uint8_t destPort) {
+    uint16_t i;
+
+    for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
+      if (socketList[i].bound) {
+        socket_store_t sock = socketList[i];
+
+        if (sock.src == srcPort && sock.dest.port == destPort &&
+            sock.dest.addr == destAddr &&
+            !(sock.state == CLOSED || sock.state == SYN_RCVD ||
+              sock.state == SYN_SENT || sock.state == LISTEN)) {
+          return i;
+        }
+      }
+    }
+
+    dbg(TRANSPORT_CHANNEL, "Socket not found!\n");
+    dbg(TRANSPORT_CHANNEL, "destAddr: %u | srcPort: %u | destPort: %u\n",
+        destAddr, srcPort, destPort);
+
+    return NULL_SOCKET;
   }
 
   /**

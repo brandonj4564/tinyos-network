@@ -55,6 +55,10 @@ interface Transport {
   // Will be called by the recipient of the initial FIN packet to call close()
   event void alertClose(socket_t fd);
 
+  // Don't have the socket fd? No worries!
+  command error_t getSocketFD(uint8_t destAddr, uint8_t srcPort,
+                              uint8_t destPort);
+
   /**
    * Checks to see if there are socket connections to connect to and
    * if there is one, connect to it.

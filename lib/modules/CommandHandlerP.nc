@@ -77,6 +77,11 @@ implementation {
         signal CommandHandler.setTestServer(buff[0]);
         break;
 
+      case CMD_CLOSE_CLIENT:
+        dbg(COMMAND_CHANNEL, "Command Type: Client\n");
+        signal CommandHandler.closeClient(buff[0], buff[1], buff[2]);
+        break;
+
       default:
         dbg(COMMAND_CHANNEL,
             "CMD_ERROR: \"%d\" does not match any known commands.\n", msg->id);

@@ -147,6 +147,10 @@ implementation {
 
   event void CommandHandler.printDistanceVector() {}
 
+  /**
+   * --------------------- TRANSPORT PROJECT 3 SECTION ---------------------
+   */
+
   event void Transport.newConnectionReceived(socket_t fd) {
     dbg(GENERAL_CHANNEL, "New connection received!\n");
     call Transport.accept(fd);
@@ -203,6 +207,24 @@ implementation {
     call Transport.listen(fd);
   }
 
+  event void CommandHandler.closeClient(uint8_t destAddr, uint8_t srcPort,
+                                        uint8_t destPort) {
+    socket_t fileDescriptor;
+    error_t outcome;
+
+    dbg(GENERAL_CHANNEL,
+        "Close client command issued, attempting to close socket.\n");
+
+    fileDescriptor = call Transport.getSocketFD(destAddr, srcPort, destPort);
+    outcome = call Transport.close(fileDescriptor);
+
+    if (outcome == FAIL) {
+      // Still data left, set a timer
+      call ClientTimer.startOneShot(500);
+      currSock = fileDescriptor;
+    }
+  }
+
   event void Transport.connectionSuccess(socket_t fd) {
     // socket fd's connection to server is a success
     // time to start writing data
@@ -215,18 +237,6 @@ implementation {
 
     dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
     dataSent = call Transport.write(fd, data, transferData);
-
-    if (transferData - dataSent <= 0) {
-      // No more data to be sent, close the connection
-      error_t outcome = call Transport.close(fd);
-      dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
-
-      if (outcome == FAIL) {
-        // Still data left, set a timer
-        call ClientTimer.startOneShot(500);
-        currSock = fd;
-      }
-    }
   }
 
   event void Transport.bufferFreed(socket_t fd) {
@@ -242,17 +252,18 @@ implementation {
       dataSent =
           dataSent + call Transport.write(fd, data, transferData - dataSent);
 
-      if (transferData - dataSent <= 0) {
-        // No more data to be sent, close the connection
-        error_t outcome = call Transport.close(fd);
-        dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
+      // if (transferData - dataSent <= 0) {
+      //   // No more data to be sent, close the connection
 
-        if (outcome == FAIL) {
-          // Still data left, set a timer
-          call ClientTimer.startOneShot(500);
-          currSock = fd;
-        }
-      }
+      //   error_t outcome = call Transport.close(fd);
+      //   dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
+
+      //   if (outcome == FAIL) {
+      //     // Still data left, set a timer
+      //     call ClientTimer.startOneShot(500);
+      //     currSock = fd;
+      //   }
+      // }
     }
   }
 
@@ -310,6 +321,10 @@ implementation {
       return;
     }
   }
+
+  /**
+   * --------------------- END TRANSPORT PROJECT 3 SECTION ---------------------
+   */
 
   event void CommandHandler.setAppServer() {}
 
