@@ -159,7 +159,7 @@ def main():
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
     s.runTime(1);
-    s.addChannel(s.TRANSPORT_CHANNEL);
+    # s.addChannel(s.TRANSPORT_CHANNEL);
     s.runTime(30);
 
     # def cmdTestServer(self, destination, port)
@@ -168,7 +168,7 @@ def main():
     s.runTime(1);
     s.cmdTestClient(2, 3, 20, 10, 150); # Node 2 on port 20, sends data to node 3 on port 10
     s.runTime(1);
-    # s.cmdTestClient(9, 3, 30, 10, 15); # Node 2 on port 20, sends data to node 3 on port 10
+    # s.cmdTestClient(9, 3, 30, 10, 15); # Node 9 on port 30, sends data to node 3 on port 10
     s.runTime(10);
     s.cmdClientClose(2, 3, 20, 10);
     s.runTime(20);
