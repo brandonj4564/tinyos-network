@@ -3,19 +3,22 @@
 
 // These should really be const value, but the dbg command will spit out a ton
 // of warnings.
-char COMMAND_CHANNEL[]="command";
-char GENERAL_CHANNEL[]="general";
+char COMMAND_CHANNEL[] = "command";
+char GENERAL_CHANNEL[] = "general";
 
 // Project 1
-char NEIGHBOR_CHANNEL[]="neighbor";
-char FLOODING_CHANNEL[]="flooding";
+char NEIGHBOR_CHANNEL[] = "neighbor";
+char FLOODING_CHANNEL[] = "flooding";
 
 // Project 2
-char ROUTING_CHANNEL[]="routing";
+char ROUTING_CHANNEL[] = "routing";
 
 // Project 3
-char TRANSPORT_CHANNEL[]="transport";
+char TRANSPORT_CHANNEL[] = "transport";
+
+// Project 4
+char CHAT_CHANNEL[] = "chat";
 
 // Personal Debuggin Channels for some of the additional models implemented.
-char HASHMAP_CHANNEL[]="hashmap";
+char HASHMAP_CHANNEL[] = "hashmap";
 #endif

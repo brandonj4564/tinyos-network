@@ -1,0 +1,1 @@
+interface ChatRoom { command void sendMessage(char *msg); }

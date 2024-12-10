@@ -73,13 +73,18 @@ implementation {
         break;
 
       case CMD_TEST_SERVER:
-        dbg(COMMAND_CHANNEL, "Command Type: Client\n");
+        dbg(COMMAND_CHANNEL, "Command Type: Server\n");
         signal CommandHandler.setTestServer(buff[0]);
         break;
 
       case CMD_CLOSE_CLIENT:
         dbg(COMMAND_CHANNEL, "Command Type: Client\n");
         signal CommandHandler.closeClient(buff[0], buff[1], buff[2]);
+        break;
+
+      case CMD_SEND_MESSAGE:
+        dbg(COMMAND_CHANNEL, "Command Type: Send Chat\n");
+        signal CommandHandler.sendMessage((char *)&buff[0]);
         break;
 
       default:

@@ -47,6 +47,9 @@ implementation {
   components TransportC;
   Node.Transport->TransportC;
 
+  components ChatRoomC;
+  Node.ChatRoom->ChatRoomC;
+
   components new TimerMilliC() as ClientTimer;
   Node.ClientTimer->ClientTimer;
 

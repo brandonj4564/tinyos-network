@@ -35,6 +35,9 @@ module Node {
   uses interface Transport;
   uses interface Timer<TMilli> as ClientTimer;
   uses interface Timer<TMilli> as TestTimer;
+
+  // Project 4
+  uses interface ChatRoom;
 }
 
 implementation {
@@ -324,6 +327,18 @@ implementation {
 
   /**
    * --------------------- END TRANSPORT PROJECT 3 SECTION ---------------------
+   */
+
+  /**
+   * --------------------- PROJECT 4 CHATROOM ---------------------
+   */
+  event void CommandHandler.sendMessage(char *msg) {
+    // Send the message
+    call ChatRoom.sendMessage(msg);
+  }
+
+  /**
+   * --------------------- END PROJECT 4 SECTION ---------------------
    */
 
   event void CommandHandler.setAppServer() {}

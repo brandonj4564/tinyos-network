@@ -18,6 +18,7 @@ enum {
   CMD_TEST_SERVER = 5,
   CMD_CLOSE_CLIENT = 6,
   CMD_KILL = 7,
+  CMD_SEND_MESSAGE = 8,
   CMD_ERROR = 9
 };
 
