@@ -155,8 +155,8 @@ implementation {
    */
 
   event void Transport.newConnectionReceived(socket_t fd) {
-    dbg(GENERAL_CHANNEL, "New connection received!\n");
-    call Transport.accept(fd);
+    // dbg(GENERAL_CHANNEL, "New connection received!\n");
+    // call Transport.accept(fd);
   }
 
   event void TestTimer.fired() {
@@ -174,20 +174,20 @@ implementation {
   }
 
   event void Transport.dataAvailable(socket_t fd) {
-    uint8_t size = 100;
-    uint8_t data[size];
-    uint8_t actualSize;
-    uint8_t i;
+    // uint8_t size = 100;
+    // uint8_t data[size];
+    // uint8_t actualSize;
+    // uint8_t i;
 
-    actualSize = call Transport.read(fd, data, size);
-    dbg(GENERAL_CHANNEL, "Reading %u bytes of data from socket %u.\n",
-        actualSize, fd);
-    for (i = 0; i < actualSize; i++) {
-      dbg(GENERAL_CHANNEL, "%u\n", data[i]);
-    }
+    // actualSize = call Transport.read(fd, data, size);
+    // dbg(GENERAL_CHANNEL, "Reading %u bytes of data from socket %u.\n",
+    //     actualSize, fd);
+    // for (i = 0; i < actualSize; i++) {
+    //   dbg(GENERAL_CHANNEL, "%u\n", data[i]);
+    // }
 
-    // currSock = fd;
-    // call TestTimer.startOneShot(500);
+    // // currSock = fd;
+    // // call TestTimer.startOneShot(500);
   }
 
   event void CommandHandler.setTestServer(uint8_t port) {
@@ -229,59 +229,59 @@ implementation {
   }
 
   event void Transport.connectionSuccess(socket_t fd) {
-    // socket fd's connection to server is a success
-    // time to start writing data
-    uint8_t data[transferData];
-    uint16_t i;
+    // // socket fd's connection to server is a success
+    // // time to start writing data
+    // uint8_t data[transferData];
+    // uint16_t i;
 
-    for (i = 0; i < transferData; i++) {
-      data[i] = (uint8_t)i;
-    }
+    // for (i = 0; i < transferData; i++) {
+    //   data[i] = (uint8_t)i;
+    // }
 
-    dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
-    dataSent = call Transport.write(fd, data, transferData);
+    // dbg(GENERAL_CHANNEL, "Socket %u succesfully connected!\n", fd);
+    // dataSent = call Transport.write(fd, data, transferData);
   }
 
   event void Transport.bufferFreed(socket_t fd) {
-    if (dataSent < transferData) {
-      uint8_t data[transferData - dataSent];
-      uint16_t i;
+    // if (dataSent < transferData) {
+    //   uint8_t data[transferData - dataSent];
+    //   uint16_t i;
 
-      for (i = 0; i < transferData - dataSent; i++) {
-        data[i] = (uint8_t)(i + dataSent);
-      }
-      dbg(GENERAL_CHANNEL, "Socket %u has more space in sendBuffer.\n", fd);
+    //   for (i = 0; i < transferData - dataSent; i++) {
+    //     data[i] = (uint8_t)(i + dataSent);
+    //   }
+    //   dbg(GENERAL_CHANNEL, "Socket %u has more space in sendBuffer.\n", fd);
 
-      dataSent =
-          dataSent + call Transport.write(fd, data, transferData - dataSent);
+    //   dataSent =
+    //       dataSent + call Transport.write(fd, data, transferData - dataSent);
 
-      // if (transferData - dataSent <= 0) {
-      //   // No more data to be sent, close the connection
+    //   // if (transferData - dataSent <= 0) {
+    //   //   // No more data to be sent, close the connection
 
-      //   error_t outcome = call Transport.close(fd);
-      //   dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
+    //   //   error_t outcome = call Transport.close(fd);
+    //   //   dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", fd);
 
-      //   if (outcome == FAIL) {
-      //     // Still data left, set a timer
-      //     call ClientTimer.startOneShot(500);
-      //     currSock = fd;
-      //   }
-      // }
-    }
+    //   //   if (outcome == FAIL) {
+    //   //     // Still data left, set a timer
+    //   //     call ClientTimer.startOneShot(500);
+    //   //     currSock = fd;
+    //   //   }
+    //   // }
+    // }
   }
 
   event void Transport.alertClose(socket_t fd) {
-    error_t outcome = call Transport.close(fd);
-    currSock = fd;
+    // error_t outcome = call Transport.close(fd);
+    // currSock = fd;
 
-    if (outcome == FAIL) {
-      // Still data left, set a timer
-      dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", currSock);
-      call ClientTimer.startOneShot(500);
-    } else if (outcome == SUCCESS) {
-      dbg(GENERAL_CHANNEL, "Successfully called close() on socket %u!\n",
-          currSock);
-    }
+    // if (outcome == FAIL) {
+    //   // Still data left, set a timer
+    //   dbg(GENERAL_CHANNEL, "Trying to close socket %u...\n", currSock);
+    //   call ClientTimer.startOneShot(500);
+    // } else if (outcome == SUCCESS) {
+    //   dbg(GENERAL_CHANNEL, "Successfully called close() on socket %u!\n",
+    //       currSock);
+    // }
   }
 
   event void ClientTimer.fired() {

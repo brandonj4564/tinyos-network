@@ -165,11 +165,13 @@ def main():
     s.bootAll();
     s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
+    # s.addChannel(s.TRANSPORT_CHANNEL);
     s.addChannel(s.CHAT_CHANNEL);
-    s.runTime(1);
+    s.runTime(60);
 
-    # Node 2 sends the message "hallo!" to node 1
-    s.cmdSendMessage(2, "hallo!");
+    # Node 2 sends the message to node 1
+    s.cmdSendMessage(2, "hello brandon 25\\r\\n");
+    
 
     s.runTime(30);
 

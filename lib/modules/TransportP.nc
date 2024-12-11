@@ -1066,6 +1066,7 @@ implementation {
 
       if (fd == NULL_SOCKET) {
         // No matching LISTEN socket with same port, FAIL
+        dbg(TRANSPORT_CHANNEL, "No matching listener socket.\n");
         endHandlePacket();
         return;
       }
