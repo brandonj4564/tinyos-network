@@ -59,6 +59,8 @@ interface Transport {
   command error_t getSocketFD(uint8_t destAddr, uint8_t srcPort,
                               uint8_t destPort);
 
+  command socket_addr_t *getSocketAddr(socket_t fd);
+
   /**
    * Checks to see if there are socket connections to connect to and
    * if there is one, connect to it.

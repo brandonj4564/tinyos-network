@@ -171,9 +171,12 @@ def main():
 
     # Node 2 sends the message to node 1
     s.cmdSendMessage(2, "hello brandon 25\\r\\n");
+    s.runTime(5);
+    s.cmdSendMessage(2, "msg Hello World!\\r\\n");
+
     
 
-    s.runTime(30);
+    s.runTime(10);
 
 
 

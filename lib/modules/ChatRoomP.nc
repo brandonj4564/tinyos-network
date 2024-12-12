@@ -7,6 +7,8 @@ module ChatRoomP {
   uses interface Boot;
   uses interface Transport;
   uses interface Timer<TMilli> as InitListenerSocket;
+  uses interface List<socket_t> as MessageIdQueue;
+  uses interface Hashmap<socket_t> as CorrespondingSocket;
 }
 
 implementation {
@@ -168,8 +170,10 @@ implementation {
     uint8_t portLen = 0;
 
     socket_addr_t clientAddr;
+    socket_addr_t listenerAddr;
     socket_addr_t serverAddr;
     error_t outcome;
+    socket_t fd;
 
     // Get the username from the message
     while (contents[i] != ' ') {
@@ -223,18 +227,30 @@ implementation {
       dbg(CHAT_CHANNEL, "ChatRoom connecting to server failed...\n");
       return;
     }
+
+    // Need to make two sockets because I did not make TCP bidirectional
+    // (oopsie)
+    fd = call Transport.socket();
+    listenerAddr.port = 41;
+    listenerAddr.addr = TOS_NODE_ID;
+
+    outcome = call Transport.bind(fd, &listenerAddr);
+    if (outcome == FAIL) {
+      dbg(CHAT_CHANNEL, "ChatRoom binding client listener socket failed...\n");
+      return;
+    }
+
+    outcome = call Transport.listen(fd);
+    if (outcome == FAIL) {
+      dbg(CHAT_CHANNEL, "ChatRoom failed to init client listener socket...\n");
+      return;
+    }
   }
 
-  command void ChatRoom.sendMessage(char *msg) {
-
-    uint8_t i = 0;
+  uint8_t getMessageType(char *msg) {
     uint8_t commandType = UNKNOWN;
+    uint8_t i;
 
-    // Contents is the stuff in the message after the name of the message
-    // Ex: hello acerpa. Content is 'acerpa'
-    char *contents;
-
-    // These bools are used to identify the command in the message
     bool possiblyHello = TRUE;
     bool possiblyMsg = TRUE;
     bool possiblyWhisper = TRUE;
@@ -245,8 +261,6 @@ implementation {
     char *whisperCommand = "whisper";
     char *listCommand = "list";
 
-    dbg(CHAT_CHANNEL, "Sending message: %s\n", msg);
-
     while (msg[i] != '\0') {
 
       if (possiblyHello) {
@@ -254,7 +268,6 @@ implementation {
           if (msg[i] == 'o' && msg[i + 1] == ' ') {
             // This is the final letter, so it is confirmed to be hello
             commandType = HELLO;
-            contents = &(msg[i + 2]);
             break;
           }
         } else {
@@ -267,7 +280,6 @@ implementation {
           if (msg[i] == 'g' && msg[i + 1] == ' ') {
             // This is the final letter, so it is confirmed to be hello
             commandType = MESSAGE;
-            contents = &(msg[i + 2]);
             break;
           }
         } else {
@@ -280,7 +292,6 @@ implementation {
           if (msg[i] == 'r' && msg[i + 1] == ' ') {
             // This is the final letter, so it is confirmed to be hello
             commandType = WHISPER;
-            contents = &(msg[i + 2]);
             break;
           }
         } else {
@@ -293,7 +304,6 @@ implementation {
           if (msg[i] == 't' && msg[i + 1] == ' ') {
             // This is the final letter, so it is confirmed to be hello
             commandType = LIST;
-            contents = &(msg[i + 2]);
             break;
           }
         } else {
@@ -304,17 +314,32 @@ implementation {
       i++;
     }
 
+    return commandType;
+  }
+
+  command void ChatRoom.sendMessage(char *msg) {
+    uint8_t commandType = getMessageType(msg);
+
+    // Contents is the stuff in the message after the name of the message
+    // Ex: hello acerpa. Content is 'acerpa'
+    char *contents;
+
+    dbg(CHAT_CHANNEL, "Sending message: %s\n", msg);
+
     if (commandType == UNKNOWN) {
       dbg(CHAT_CHANNEL, "Unknown command!\n");
       return;
     }
 
-    // dbg(CHAT_CHANNEL, "Msg len: %u\n", i);
-    dbg(CHAT_CHANNEL, "Contents: %s\n", contents);
-
     if (commandType == HELLO) {
 
       dbg(CHAT_CHANNEL, "Command type: HELLO\n");
+
+      // contents begin at index 6 because indices 0-5 are 'hello ', which is
+      // not useful anymore
+      contents = &(msg[6]);
+      dbg(CHAT_CHANNEL, "Contents: %s\n", contents);
+
       handleHello(contents);
     } else if (commandType == MESSAGE) {
 
@@ -340,7 +365,7 @@ implementation {
       uint8_t i;
       bool canAccept = FALSE;
 
-      dbg(CHAT_CHANNEL, "New connection received!\n");
+      dbg(CHAT_CHANNEL, "New connection from client received!\n");
 
       for (i = 0; i < MAX_NUM_OF_SOCKETS - 1; i++) {
         if (!connectionList[i].bound) {
@@ -357,76 +382,171 @@ implementation {
       } else {
         dbg(CHAT_CHANNEL, "No more connections can be accepted!\n");
       }
+    } else {
+      // This is the client accepting the connection from the chat server
+      dbg(CHAT_CHANNEL, "New connection from server received!\n");
+      call Transport.accept(fd);
     }
   }
 
   event void Transport.connectionSuccess(socket_t fd) {
-    // Send the username
-    uint8_t i;
-    char message[6 + usernameLen + 4];
-    message[0] = 'h';
-    message[1] = 'e';
-    message[2] = 'l';
-    message[3] = 'l';
-    message[4] = 'o';
-    message[5] = ' ';
+    if (TOS_NODE_ID == 1) {
 
-    for (i = 0; i < usernameLen; i++) {
-      message[i + 6] = username[i];
+    } else {
+      // Send the username
+      uint8_t i;
+      char message[6 + usernameLen + 4];
+      message[0] = 'h';
+      message[1] = 'e';
+      message[2] = 'l';
+      message[3] = 'l';
+      message[4] = 'o';
+      message[5] = ' ';
+
+      for (i = 0; i < usernameLen; i++) {
+        message[i + 6] = username[i];
+      }
+
+      message[usernameLen + 6 + 0] = '\\';
+      message[usernameLen + 6 + 1] = 'r';
+      message[usernameLen + 6 + 2] = '\\';
+      message[usernameLen + 6 + 3] = 'n';
+      message[usernameLen + 6 + 4] = '\0';
+
+      clientConnected = TRUE;
+
+      dbg(CHAT_CHANNEL, "message to server: %s\n", message);
+
+      call Transport.write(fd, (uint8_t *)message, 6 + usernameLen + 4);
     }
-
-    message[usernameLen + 6 + 0] = '\\';
-    message[usernameLen + 6 + 1] = 'r';
-    message[usernameLen + 6 + 2] = '\\';
-    message[usernameLen + 6 + 3] = 'n';
-    message[usernameLen + 6 + 4] = '\0';
-
-    dbg(CHAT_CHANNEL, "message to server: %s\n", message);
-
-    call Transport.write(fd, (uint8_t *)message, 6 + usernameLen + 4);
   }
 
-  //   task void handleMessage() {
-  //     chat_message_t *message = call MessageBuffer.popfront();
-  //     dbg(CHAT_CHANNEL, "Begin handing message.\n");
-  //     printMessage(message);
+  void handleMessageServer(char *msg, uint8_t len, socket_t fd) {
+    uint8_t i = 0;
+    uint8_t commandType = getMessageType(msg);
 
-  //     if (!(call MessageBuffer.isEmpty())) {
-  //       post handleMessage();
-  //     } else {
-  //       handlingMessage = FALSE;
-  //     }
-  //   }
+    if (commandType == UNKNOWN) {
+      dbg(CHAT_CHANNEL, "Unknown command received!\n");
+      return;
+    }
+
+    if (commandType == HELLO) {
+      char *contents = &(msg[6]);
+      socket_addr_t source;
+      socket_addr_t dest;
+      error_t outcome;
+
+      socket_t newSocket = call Transport.socket();
+      source.port = 41;
+      source.addr = TOS_NODE_ID;
+
+      // Hard coded according to the values specified in the document
+      dest.port = 41;
+      dest.addr = (call Transport.getSocketAddr(fd))->addr;
+
+      outcome = call Transport.bind(newSocket, &source);
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL, "ChatRoom binding server socket failed...\n");
+        return;
+      }
+
+      outcome = call Transport.connect(newSocket, &dest);
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL, "ChatRoom connecting to client failed...\n");
+        return;
+      }
+
+      // Add this to a hashmap so the server knows which socket to use to reply
+      call CorrespondingSocket.insert(fd, newSocket);
+
+      i = 0;
+      while (!isEndSymbol(&(contents[i]))) {
+        (connectionList[fd].username)[i] = contents[i];
+        i++;
+      }
+      (connectionList[fd].username)[i] = '\0';
+      connectionList[fd].usernameLen = i;
+
+      //   dbg(CHAT_CHANNEL, "username: %s\n", connectionList[fd].username);
+      //   dbg(CHAT_CHANNEL, "usernameLen: %u\n",
+      //   connectionList[fd].usernameLen);
+
+    } else if (commandType == MESSAGE) {
+
+    } else if (commandType == WHISPER) {
+
+    } else if (commandType == LIST) {
+    }
+  }
+
+  void handleMessageClient(char *msg, uint8_t len, socket_t fd) {
+    //
+  }
+
+  task void handleMessage() {
+    socket_t fd = call MessageIdQueue.popfront();
+    char fullMessage[messageBufferIndex[fd]];
+    uint8_t i;
+
+    dbg(CHAT_CHANNEL, "Begin handing message.\n");
+
+    for (i = 0; i < messageBufferIndex[fd]; i++) {
+      fullMessage[i] = messageDataBuffer[fd][i];
+    }
+    fullMessage[messageBufferIndex[fd]] = '\0';
+
+    dbg(CHAT_CHANNEL, "Message: %s\n", fullMessage);
+
+    if (TOS_NODE_ID == 1) {
+      handleMessageServer(fullMessage, messageBufferIndex[fd], fd);
+    } else {
+      handleMessageClient(fullMessage, messageBufferIndex[fd], fd);
+    }
+
+    // Reset the index for the corresponding message buffer so that another
+    // message can be written in there
+    messageBufferIndex[fd] = 0;
+
+    if (!(call MessageIdQueue.isEmpty())) {
+      post handleMessage();
+    } else {
+      handlingMessage = FALSE;
+    }
+  }
 
   event void Transport.dataAvailable(socket_t fd) {
-    uint8_t lengthRead;
-    dbg(CHAT_CHANNEL, "Message received!\n");
+    if (TOS_NODE_ID == 1) {
+      // Server receives data from clients
+      uint8_t lengthRead;
+      dbg(CHAT_CHANNEL, "Message received!\n");
 
-    lengthRead =
-        call Transport.read(fd, &messageDataBuffer[fd][messageBufferIndex[fd]],
-                            messageBuffSize - messageBufferIndex[fd]);
-    messageBufferIndex[fd] += lengthRead;
-    dbg(CHAT_CHANNEL, "Message length: %u\n", lengthRead);
-    dbg(CHAT_CHANNEL, "Message buffer index: %u\n", messageBufferIndex[fd]);
+      lengthRead = call Transport.read(
+          fd, &messageDataBuffer[fd][messageBufferIndex[fd]],
+          messageBuffSize - messageBufferIndex[fd]);
+      messageBufferIndex[fd] += lengthRead;
 
-    if (messageBufferIndex[fd] >= 4) {
-      char *fourCharsBeforeEnd =
-          (char *)(&(messageDataBuffer[fd][messageBufferIndex[fd] - 4]));
+      // dbg(CHAT_CHANNEL, "Message length: %u\n", lengthRead);
+      // dbg(CHAT_CHANNEL, "Message buffer index: %u\n",
+      // messageBufferIndex[fd]);
 
-      if (isEndSymbol(fourCharsBeforeEnd)) {
-        // Basically, this is the end of the message and it has fully arrived
-        char fullMessage[messageBufferIndex[fd]];
-        uint8_t i;
+      if (messageBufferIndex[fd] >= 4) {
+        char *fourCharsBeforeEnd =
+            (char *)(&(messageDataBuffer[fd][messageBufferIndex[fd] - 4]));
 
-        dbg(CHAT_CHANNEL, "End of message!\n");
+        if (isEndSymbol(fourCharsBeforeEnd)) {
+          // Basically, this is the end of the message and it has fully arrived
+          // dbg(CHAT_CHANNEL, "End of message!\n");
 
-        for (i = 0; i < messageBufferIndex[fd]; i++) {
-          fullMessage[i] = messageDataBuffer[fd][i];
+          call MessageIdQueue.pushback(fd);
+
+          if (!handlingMessage) {
+            post handleMessage();
+          }
         }
-        fullMessage[messageBufferIndex[fd]] = '\0';
-
-        dbg(CHAT_CHANNEL, "Message: %s\n", fullMessage);
       }
+    } else {
+      // client receives data from the server
+      dbg(CHAT_CHANNEL, "Message received at client from server!\n");
     }
   }
 

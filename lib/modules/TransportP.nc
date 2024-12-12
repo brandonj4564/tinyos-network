@@ -1774,6 +1774,22 @@ implementation {
     return NULL_SOCKET;
   }
 
+  command socket_addr_t *Transport.getSocketAddr(socket_t fd) {
+    socket_store_t *currSock;
+    if (fd < 0 || fd >= MAX_NUM_OF_SOCKETS) {
+      return 0;
+    }
+
+    currSock = &socketList[fd];
+
+    if (!(currSock->bound) || currSock->state == CLOSED) {
+      // socket has to be bound and already established and have room
+      return 0;
+    }
+
+    return &(socketList[fd].dest);
+  }
+
   /**
    * Closes the socket.
    * @param
