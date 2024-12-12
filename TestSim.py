@@ -187,11 +187,7 @@ def main():
     # s.cmdSendMessage(2, "whisper chungus Hi!\\r\\n");
     s.cmdSendMessage(2, "msg Hello!\\r\\n");
     s.runTime(5);
-    s.cmdSendMessage(3, "msg What's up?\\r\\n");
-    s.runTime(5);
-    s.cmdSendMessage(4, "msg just checking in\\r\\n");
-    s.runTime(5);
-    s.cmdSendMessage(5, "msg so how're ya\\r\\n");
+    s.cmdSendMessage(4, "listusr\\r\\n");
     s.runTime(5);
 
     s.runTime(50);

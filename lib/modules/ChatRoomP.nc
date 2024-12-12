@@ -649,6 +649,79 @@ implementation {
       }
 
     } else if (commandType == LIST) {
+      // Need to return a list of usernames
+      char messageToSend[messageBuffSize];
+      uint8_t currPosition = 0;
+
+      // Used to stop adding a comma at the start of the string
+      bool firstName = TRUE;
+
+      socket_t writeSocket;
+
+      //   dbg(CHAT_CHANNEL, "LIST command received!\n");
+
+      // Okay look, I *know* there's probably a better way of doing this but I
+      // don't feel like looking it up right now
+      messageToSend[currPosition] = 'u';
+      currPosition++;
+      messageToSend[currPosition] = 's';
+      currPosition++;
+      messageToSend[currPosition] = 'e';
+      currPosition++;
+      messageToSend[currPosition] = 'r';
+      currPosition++;
+      messageToSend[currPosition] = 's';
+      currPosition++;
+      messageToSend[currPosition] = ':';
+      currPosition++;
+      messageToSend[currPosition] = ' ';
+      currPosition++;
+
+      for (i = 0; i < maxNumConnections; i++) {
+        // loop through all connections and get all the usernames
+        if (connectionList[i].bound) {
+          chat_connection_t *currConn = &connectionList[i];
+          char *user = currConn->username;
+          uint8_t length = currConn->usernameLen;
+          uint8_t j;
+
+          if (firstName) {
+            // start adding commas from now on
+            firstName = FALSE;
+          } else {
+            messageToSend[currPosition] = ',';
+            currPosition++;
+            messageToSend[currPosition] = ' ';
+            currPosition++;
+          }
+
+          // copy each username into the message
+          for (j = 0; j < length; j++) {
+            messageToSend[currPosition] = user[j];
+            currPosition++;
+          }
+        }
+      }
+
+      messageToSend[currPosition] = '\\';
+      currPosition++;
+      messageToSend[currPosition] = 'r';
+      currPosition++;
+      messageToSend[currPosition] = '\\';
+      currPosition++;
+      messageToSend[currPosition] = 'n';
+      currPosition++;
+      messageToSend[currPosition] = '\0';
+
+      //   dbg(CHAT_CHANNEL, "%s\n", messageToSend);
+
+      if (!(call CorrespondingSocket.contains(fd))) {
+        dbg(CHAT_CHANNEL, "No corresponding write socket for %u\n", fd);
+        return;
+      }
+      writeSocket = call CorrespondingSocket.get(fd);
+
+      call Transport.write(writeSocket, (uint8_t *)messageToSend, currPosition);
     }
   }
 
@@ -665,7 +738,7 @@ implementation {
     fullMessage[messageBufferIndex[fd]] = '\0';
 
     if (TOS_NODE_ID == 1) {
-      dbg(CHAT_CHANNEL, "Message at server: %s\n", fullMessage);
+      //   dbg(CHAT_CHANNEL, "Message at server: %s\n", fullMessage);
       handleMessageServer(fullMessage, messageBufferIndex[fd], fd);
     } else {
       // The client pretty much only needs to display the message
@@ -702,8 +775,7 @@ implementation {
     messageBufferIndex[fd] += lengthRead;
 
     // dbg(CHAT_CHANNEL, "Message length: %u\n", lengthRead);
-    // dbg(CHAT_CHANNEL, "Message buffer index: %u\n",
-    // messageBufferIndex[fd]);
+    // dbg(CHAT_CHANNEL, "Message buffer index: %u\n", messageBufferIndex[fd]);
 
     if (messageBufferIndex[fd] >= 4) {
       char *fourCharsBeforeEnd =
