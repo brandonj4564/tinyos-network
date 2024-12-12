@@ -46,8 +46,8 @@ implementation {
   } chat_connection_t;
 
   // This list is only used by node 1, the server
-  // It is 1 less than max num because one of the sockets must be the listener
-  chat_connection_t connectionList[MAX_NUM_OF_SOCKETS - 1];
+  uint8_t maxNumConnections = (MAX_NUM_OF_SOCKETS) / 2 - 1;
+  chat_connection_t connectionList[(MAX_NUM_OF_SOCKETS) / 2 - 1];
 
   // This is the socket used by the client to connect to the server
   socket_t clientSocket;
@@ -100,7 +100,7 @@ implementation {
     call Transport.listen(fd);
     dbg(CHAT_CHANNEL, "Listener socket set up!\n");
 
-    for (i = 0; i < MAX_NUM_OF_SOCKETS - 1; i++) {
+    for (i = 0; i < maxNumConnections; i++) {
       // initialize connection list
       chat_connection_t *currConn = &connectionList[i];
       currConn->bound = FALSE;
@@ -162,91 +162,6 @@ implementation {
     return result;
   }
 
-  void handleHello(char *contents) {
-    // This will initiate a TCP connection with the server at node 1, port 41
-    uint8_t i = 0;
-
-    char *port;
-    uint8_t portLen = 0;
-
-    socket_addr_t clientAddr;
-    socket_addr_t listenerAddr;
-    socket_addr_t serverAddr;
-    error_t outcome;
-    socket_t fd;
-
-    // Get the username from the message
-    while (contents[i] != ' ') {
-      if (contents[i] == '\0' || isEndSymbol(&(contents[i]))) {
-        dbg(CHAT_CHANNEL, "ERROR: Hello command lacks a username!\n");
-        return;
-      }
-      username[i] = contents[i];
-      usernameLen++;
-      i++;
-    }
-
-    port = &(contents[i + 1]);
-
-    // Extract the port number
-    while (contents[i + 1] != '\0' && !isEndSymbol(&(contents[i + 1]))) {
-      if (contents[i + 1] == ' ') {
-        dbg(CHAT_CHANNEL, "ERROR: Extra space after port number!\n");
-        return;
-      }
-
-      portLen++;
-      i++;
-    }
-
-    if (portLen == 0) {
-      dbg(CHAT_CHANNEL, "ERROR: Hello command lacks a port!\n");
-      return;
-    }
-
-    // dbg(CHAT_CHANNEL, "Username len: %u\n", usernameLen);
-    // dbg(CHAT_CHANNEL, "Port: %u\n", stringToInt(port, portLen));
-
-    // Time to initiate a TCP connection
-    clientSocket = call Transport.socket();
-    clientAddr.port = stringToInt(port, portLen);
-    clientAddr.addr = TOS_NODE_ID;
-
-    // Hard coded according to the values specified in the document
-    serverAddr.port = 41;
-    serverAddr.addr = 1;
-
-    outcome = call Transport.bind(clientSocket, &clientAddr);
-    if (outcome == FAIL) {
-      dbg(CHAT_CHANNEL, "ChatRoom binding client socket failed...\n");
-      return;
-    }
-
-    outcome = call Transport.connect(clientSocket, &serverAddr);
-    if (outcome == FAIL) {
-      dbg(CHAT_CHANNEL, "ChatRoom connecting to server failed...\n");
-      return;
-    }
-
-    // Need to make two sockets because I did not make TCP bidirectional
-    // (oopsie)
-    fd = call Transport.socket();
-    listenerAddr.port = 41;
-    listenerAddr.addr = TOS_NODE_ID;
-
-    outcome = call Transport.bind(fd, &listenerAddr);
-    if (outcome == FAIL) {
-      dbg(CHAT_CHANNEL, "ChatRoom binding client listener socket failed...\n");
-      return;
-    }
-
-    outcome = call Transport.listen(fd);
-    if (outcome == FAIL) {
-      dbg(CHAT_CHANNEL, "ChatRoom failed to init client listener socket...\n");
-      return;
-    }
-  }
-
   uint8_t getMessageType(char *msg) {
     uint8_t commandType = UNKNOWN;
     uint8_t i;
@@ -259,7 +174,7 @@ implementation {
     char *helloCommand = "hello";
     char *messageCommand = "msg";
     char *whisperCommand = "whisper";
-    char *listCommand = "list";
+    char *listCommand = "listusr";
 
     while (msg[i] != '\0') {
 
@@ -301,7 +216,7 @@ implementation {
 
       if (possiblyList) {
         if (msg[i] == listCommand[i]) {
-          if (msg[i] == 't' && msg[i + 1] == ' ') {
+          if (msg[i] == 'r' && isEndSymbol(msg + i + 1)) {
             // This is the final letter, so it is confirmed to be hello
             commandType = LIST;
             break;
@@ -319,6 +234,7 @@ implementation {
 
   command void ChatRoom.sendMessage(char *msg) {
     uint8_t commandType = getMessageType(msg);
+    uint8_t i = 0;
 
     // Contents is the stuff in the message after the name of the message
     // Ex: hello acerpa. Content is 'acerpa'
@@ -332,24 +248,116 @@ implementation {
     }
 
     if (commandType == HELLO) {
+      // This will initiate a TCP connection with the server at node 1, port
+      // 41
+
+      char *port;
+      uint8_t portLen = 0;
+
+      socket_addr_t clientAddr;
+      socket_addr_t listenerAddr;
+      socket_addr_t serverAddr;
+      error_t outcome;
+      socket_t fd;
 
       dbg(CHAT_CHANNEL, "Command type: HELLO\n");
 
       // contents begin at index 6 because indices 0-5 are 'hello ', which is
       // not useful anymore
       contents = &(msg[6]);
+
       dbg(CHAT_CHANNEL, "Contents: %s\n", contents);
 
-      handleHello(contents);
-    } else if (commandType == MESSAGE) {
+      // Get the username from the message
+      while (contents[i] != ' ') {
+        if (contents[i] == '\0' || isEndSymbol(&(contents[i]))) {
+          dbg(CHAT_CHANNEL, "ERROR: Hello command lacks a username!\n");
+          return;
+        }
+        username[i] = contents[i];
+        usernameLen++;
+        i++;
+      }
 
-      dbg(CHAT_CHANNEL, "Command type: MSG\n");
-    } else if (commandType == WHISPER) {
+      port = &(contents[i + 1]);
 
-      dbg(CHAT_CHANNEL, "Command type: WHISPER\n");
-    } else if (commandType == LIST) {
+      // Extract the port number
+      while (contents[i + 1] != '\0' && !isEndSymbol(&(contents[i + 1]))) {
+        if (contents[i + 1] == ' ') {
+          dbg(CHAT_CHANNEL, "ERROR: Extra space after port number!\n");
+          return;
+        }
 
-      dbg(CHAT_CHANNEL, "Command type: LIST\n");
+        portLen++;
+        i++;
+      }
+
+      if (portLen == 0) {
+        dbg(CHAT_CHANNEL, "ERROR: Hello command lacks a port!\n");
+        return;
+      }
+
+      // dbg(CHAT_CHANNEL, "Username len: %u\n", usernameLen);
+      // dbg(CHAT_CHANNEL, "Port: %u\n", stringToInt(port, portLen));
+
+      // Time to initiate a TCP connection
+      clientSocket = call Transport.socket();
+      clientAddr.port = stringToInt(port, portLen);
+      clientAddr.addr = TOS_NODE_ID;
+
+      // Hard coded according to the values specified in the document
+      serverAddr.port = 41;
+      serverAddr.addr = 1;
+
+      outcome = call Transport.bind(clientSocket, &clientAddr);
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL, "ChatRoom binding client socket failed...\n");
+        return;
+      }
+
+      outcome = call Transport.connect(clientSocket, &serverAddr);
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL, "ChatRoom connecting to server failed...\n");
+        return;
+      }
+
+      // Need to make two sockets because I did not make TCP bidirectional
+      // (oopsie)
+      fd = call Transport.socket();
+      listenerAddr.port = 41;
+      listenerAddr.addr = TOS_NODE_ID;
+
+      outcome = call Transport.bind(fd, &listenerAddr);
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL,
+            "ChatRoom binding client listener socket failed...\n");
+        return;
+      }
+
+      outcome = call Transport.listen(fd);
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL,
+            "ChatRoom failed to init client listener socket...\n");
+        return;
+      }
+
+    } else {
+      // Only 'hello' commands need special functionality on the client side
+      // All other commands only require special functions on the server side
+
+      if (!clientConnected) {
+        // Can't send other commands until the hello command has been sent!
+        dbg(CHAT_CHANNEL, "Must send 'hello' command first!\n");
+        return;
+      }
+
+      i = 0;
+      while (msg[i] != '\0') {
+        i++;
+      }
+      //   dbg(CHAT_CHANNEL, "Message len: %u\n", i);
+
+      call Transport.write(clientSocket, (uint8_t *)msg, i);
     }
 
     return;
@@ -367,10 +375,9 @@ implementation {
 
       dbg(CHAT_CHANNEL, "New connection from client received!\n");
 
-      for (i = 0; i < MAX_NUM_OF_SOCKETS - 1; i++) {
+      for (i = 0; i < maxNumConnections; i++) {
         if (!connectionList[i].bound) {
           connectionList[i].bound = TRUE;
-          connectionList[i].fd = fd;
 
           canAccept = TRUE;
           break;
@@ -378,7 +385,7 @@ implementation {
       }
 
       if (canAccept) {
-        call Transport.accept(fd);
+        connectionList[i].fd = call Transport.accept(fd);
       } else {
         dbg(CHAT_CHANNEL, "No more connections can be accepted!\n");
       }
@@ -391,7 +398,7 @@ implementation {
 
   event void Transport.connectionSuccess(socket_t fd) {
     if (TOS_NODE_ID == 1) {
-
+      // Server connection success
     } else {
       // Send the username
       uint8_t i;
@@ -415,7 +422,7 @@ implementation {
 
       clientConnected = TRUE;
 
-      dbg(CHAT_CHANNEL, "message to server: %s\n", message);
+      //   dbg(CHAT_CHANNEL, "message to server: %s\n", message);
 
       call Transport.write(fd, (uint8_t *)message, 6 + usernameLen + 4);
     }
@@ -432,6 +439,7 @@ implementation {
 
     if (commandType == HELLO) {
       char *contents = &(msg[6]);
+      uint8_t connection = 0;
       socket_addr_t source;
       socket_addr_t dest;
       error_t outcome;
@@ -459,28 +467,189 @@ implementation {
       // Add this to a hashmap so the server knows which socket to use to reply
       call CorrespondingSocket.insert(fd, newSocket);
 
+      // Get the connection
+      for (i = 0; i < maxNumConnections; i++) {
+        if (connectionList[i].bound && connectionList[i].fd == fd) {
+          connection = i;
+        }
+      }
+
       i = 0;
       while (!isEndSymbol(&(contents[i]))) {
-        (connectionList[fd].username)[i] = contents[i];
+        (connectionList[connection].username)[i] = contents[i];
         i++;
       }
-      (connectionList[fd].username)[i] = '\0';
-      connectionList[fd].usernameLen = i;
+      (connectionList[connection].username)[i] = '\0';
+      connectionList[connection].usernameLen = i;
 
-      //   dbg(CHAT_CHANNEL, "username: %s\n", connectionList[fd].username);
-      //   dbg(CHAT_CHANNEL, "usernameLen: %u\n",
-      //   connectionList[fd].usernameLen);
+      dbg(CHAT_CHANNEL, "username: %s\n", connectionList[connection].username);
+      dbg(CHAT_CHANNEL, "usernameLen: %u\n",
+          connectionList[connection].usernameLen);
 
     } else if (commandType == MESSAGE) {
+      chat_connection_t *currConn;
+      bool foundConn = FALSE;
+
+      // Limit the potential message size to the max size of the buffer
+      char messageToSend[messageBuffSize];
+      uint8_t currPosition = 0;
+      uint8_t messageLen = 0;
+
+      for (i = 0; i < maxNumConnections; i++) {
+        if (connectionList[i].bound && connectionList[i].fd == fd) {
+          currConn = &(connectionList[i]);
+          foundConn = TRUE;
+        }
+      }
+
+      if (!foundConn) {
+        dbg(CHAT_CHANNEL, "No corresponding socket found for that message!\n");
+        return;
+      }
+
+      // Generate the message to send
+      // username: message
+      for (currPosition = 0; currPosition < currConn->usernameLen;
+           currPosition++) {
+        messageToSend[currPosition] = (currConn->username)[currPosition];
+      }
+
+      // Add the semicolon and space
+      messageToSend[currPosition] = ':';
+      currPosition = currPosition + 1;
+      messageToSend[currPosition] = ' ';
+      currPosition = currPosition + 1;
+
+      // Set i to 4 to skip the 'msg' part of 'msg MESSAGE'
+      for (i = 4; i < len; i++) {
+        messageToSend[currPosition + i - 4] = msg[i];
+      }
+      messageLen = currPosition + len - 4;
+      messageToSend[messageLen] = '\0';
+
+      //   dbg(CHAT_CHANNEL, "message in total: %s\n", messageToSend);
+      //   dbg(CHAT_CHANNEL, "message in total len: %u\n", messageLen);
+
+      // Now that we have the message to send, time to loop through all chat
+      // connections and send the message
+      for (i = 0; i < maxNumConnections; i++) {
+        if (connectionList[i].bound) {
+
+          // Only send if you can find the corresponding write socket
+          if (call CorrespondingSocket.contains(connectionList[i].fd)) {
+            socket_t writeSocket =
+                call CorrespondingSocket.get(connectionList[i].fd);
+
+            call Transport.write(writeSocket, (uint8_t *)messageToSend,
+                                 messageLen);
+          }
+        }
+      }
 
     } else if (commandType == WHISPER) {
+      // basically just copy everything from the MESSAGE part above except only
+      // send to one node
+      chat_connection_t *currConn;
+      bool foundConn = FALSE;
+
+      char recipientUser[50];
+      uint8_t recipientUserLen = 0;
+
+      // Limit the potential message size to the max size of the buffer
+      char messageToSend[messageBuffSize];
+      uint8_t currPosition = 0;
+      uint8_t messageLen = 0;
+
+      for (i = 0; i < maxNumConnections; i++) {
+        if (connectionList[i].bound && connectionList[i].fd == fd) {
+          currConn = &(connectionList[i]);
+          foundConn = TRUE;
+        }
+      }
+
+      if (!foundConn) {
+        dbg(CHAT_CHANNEL, "No corresponding socket found for that message!\n");
+        return;
+      }
+
+      // Extract the username from the whisper command
+      // 'whisper ' is 8 characters, so skip that
+      i = 8;
+      while (msg[i] != ' ') {
+        if (isEndSymbol(msg + i)) {
+          dbg(CHAT_CHANNEL,
+              "A whisper command must contain a username and a message!\n");
+          return;
+        }
+
+        recipientUser[i - 8] = msg[i];
+        i++;
+        recipientUserLen++;
+      }
+      recipientUser[recipientUserLen] = '\0';
+
+      // Generate the message to send
+      // username: message
+      for (currPosition = 0; currPosition < currConn->usernameLen;
+           currPosition++) {
+        messageToSend[currPosition] = (currConn->username)[currPosition];
+      }
+
+      // Add the semicolon and space
+      messageToSend[currPosition] = ':';
+      currPosition = currPosition + 1;
+      messageToSend[currPosition] = ' ';
+      currPosition = currPosition + 1;
+
+      // Set i to 9 to skip the 'whisper ' part and the extra space ' ' between
+      // the username and actual message
+      // 'whisper brand Hello!'
+      for (i = 9; i < len; i++) {
+        messageToSend[currPosition + i - 9] = msg[i + recipientUserLen];
+      }
+      messageLen = currPosition + len - 9 - recipientUserLen;
+      messageToSend[messageLen] = '\0';
+
+      dbg(CHAT_CHANNEL, "username in total: %s\n", recipientUser);
+      dbg(CHAT_CHANNEL, "username in total len: %u\n", recipientUserLen);
+
+      dbg(CHAT_CHANNEL, "message in total: %s\n", messageToSend);
+      dbg(CHAT_CHANNEL, "message in total len: %u\n", messageLen);
+
+      //  Time to locate the chat connection with the corresponding username (if
+      //  it exists) and send the message
+      for (i = 0; i < maxNumConnections; i++) {
+        if (connectionList[i].bound) {
+          uint8_t j = 0;
+          chat_connection_t *thisConnection = &connectionList[i];
+          bool usernamesEqual = FALSE;
+
+          // Compare usernames
+          if (thisConnection->usernameLen == recipientUserLen) {
+            usernamesEqual = TRUE;
+            for (j = 0; j < recipientUserLen; j++) {
+              if ((thisConnection->username)[j] != recipientUser[j]) {
+                usernamesEqual = FALSE;
+              }
+            }
+          }
+
+          // Only send if you can find the corresponding write socket
+          if (usernamesEqual &&
+              call CorrespondingSocket.contains(thisConnection->fd)) {
+            socket_t writeSocket =
+                call CorrespondingSocket.get(thisConnection->fd);
+
+            call Transport.write(writeSocket, (uint8_t *)messageToSend,
+                                 messageLen);
+
+            break;
+          }
+        }
+      }
 
     } else if (commandType == LIST) {
     }
-  }
-
-  void handleMessageClient(char *msg, uint8_t len, socket_t fd) {
-    //
   }
 
   task void handleMessage() {
@@ -488,19 +657,27 @@ implementation {
     char fullMessage[messageBufferIndex[fd]];
     uint8_t i;
 
-    dbg(CHAT_CHANNEL, "Begin handing message.\n");
+    // dbg(CHAT_CHANNEL, "Begin handing message.\n");
 
     for (i = 0; i < messageBufferIndex[fd]; i++) {
       fullMessage[i] = messageDataBuffer[fd][i];
     }
     fullMessage[messageBufferIndex[fd]] = '\0';
 
-    dbg(CHAT_CHANNEL, "Message: %s\n", fullMessage);
-
     if (TOS_NODE_ID == 1) {
+      dbg(CHAT_CHANNEL, "Message at server: %s\n", fullMessage);
       handleMessageServer(fullMessage, messageBufferIndex[fd], fd);
     } else {
-      handleMessageClient(fullMessage, messageBufferIndex[fd], fd);
+      // The client pretty much only needs to display the message
+
+      // This gets rid of the \r\n stuff at the end
+      i = 0;
+      while (fullMessage[i] != '\0') {
+        i++;
+      }
+      fullMessage[i - 4] = '\0';
+
+      dbg(CHAT_CHANNEL, "%s\n", fullMessage);
     }
 
     // Reset the index for the corresponding message buffer so that another
@@ -515,38 +692,33 @@ implementation {
   }
 
   event void Transport.dataAvailable(socket_t fd) {
-    if (TOS_NODE_ID == 1) {
-      // Server receives data from clients
-      uint8_t lengthRead;
-      dbg(CHAT_CHANNEL, "Message received!\n");
+    // Server receives data from clients
+    uint8_t lengthRead;
+    // dbg(CHAT_CHANNEL, "Message received!\n");
 
-      lengthRead = call Transport.read(
-          fd, &messageDataBuffer[fd][messageBufferIndex[fd]],
-          messageBuffSize - messageBufferIndex[fd]);
-      messageBufferIndex[fd] += lengthRead;
+    lengthRead =
+        call Transport.read(fd, &messageDataBuffer[fd][messageBufferIndex[fd]],
+                            messageBuffSize - messageBufferIndex[fd]);
+    messageBufferIndex[fd] += lengthRead;
 
-      // dbg(CHAT_CHANNEL, "Message length: %u\n", lengthRead);
-      // dbg(CHAT_CHANNEL, "Message buffer index: %u\n",
-      // messageBufferIndex[fd]);
+    // dbg(CHAT_CHANNEL, "Message length: %u\n", lengthRead);
+    // dbg(CHAT_CHANNEL, "Message buffer index: %u\n",
+    // messageBufferIndex[fd]);
 
-      if (messageBufferIndex[fd] >= 4) {
-        char *fourCharsBeforeEnd =
-            (char *)(&(messageDataBuffer[fd][messageBufferIndex[fd] - 4]));
+    if (messageBufferIndex[fd] >= 4) {
+      char *fourCharsBeforeEnd =
+          (char *)(&(messageDataBuffer[fd][messageBufferIndex[fd] - 4]));
 
-        if (isEndSymbol(fourCharsBeforeEnd)) {
-          // Basically, this is the end of the message and it has fully arrived
-          // dbg(CHAT_CHANNEL, "End of message!\n");
+      if (isEndSymbol(fourCharsBeforeEnd)) {
+        // Basically, this is the end of the message and it has fully arrived
+        // dbg(CHAT_CHANNEL, "End of message!\n");
 
-          call MessageIdQueue.pushback(fd);
+        call MessageIdQueue.pushback(fd);
 
-          if (!handlingMessage) {
-            post handleMessage();
-          }
+        if (!handlingMessage) {
+          post handleMessage();
         }
       }
-    } else {
-      // client receives data from the server
-      dbg(CHAT_CHANNEL, "Message received at client from server!\n");
     }
   }
 
