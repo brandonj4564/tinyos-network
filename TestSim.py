@@ -159,11 +159,11 @@ def main():
     s = TestSim();
     s.runTime(10);
     s.loadTopo("example.topo");
-    # s.loadNoise("no_noise.txt");
-    s.loadNoise("meyer-heavy.txt");
+    s.loadNoise("no_noise.txt");
+    # s.loadNoise("meyer-heavy.txt");
 
     s.bootAll();
-    s.addChannel(s.COMMAND_CHANNEL);
+    # s.addChannel(s.COMMAND_CHANNEL);
     s.addChannel(s.GENERAL_CHANNEL);
     # s.addChannel(s.TRANSPORT_CHANNEL);
     s.addChannel(s.CHAT_CHANNEL);
@@ -172,21 +172,23 @@ def main():
     # I'm pretty sure there's this weirdly low limit on the size of strings I can send into TOSSIM
     # for example, "whisper brand Hello World!\\r\\n" causes an error
 
-    # there's this super weird bug where, when i try to broadcast, it sometimes sends to all but one of the nodes
-    # and it's not like a max connections issue either. with 4 nodes, it'll send to 3 sometimes. with 3 nodes, it'll send to only 2
-
     # Node 2 sends the message to node 1
     s.cmdSendMessage(2, "hello brandon 25\\r\\n");
-    s.runTime(10);
-    s.cmdSendMessage(3, "hello carlos 25\\r\\n");
-    s.runTime(10);
-    s.cmdSendMessage(4, "hello jothi 25\\r\\n");
-    s.runTime(10);
-    s.cmdSendMessage(5, "hello chungus 25\\r\\n");
-    s.runTime(10);
-    # s.cmdSendMessage(2, "whisper chungus Hi!\\r\\n");
+    s.runTime(30);
+    s.cmdSendMessage(3, "hello carlos 10\\r\\n");
+    s.runTime(30);
+    s.cmdSendMessage(4, "hello jothi 12\\r\\n");
+    s.runTime(30);
+    s.cmdSendMessage(5, "hello alberto 38\\r\\n");
+    s.runTime(30);
     s.cmdSendMessage(2, "msg Hello!\\r\\n");
-    s.runTime(5);
+    s.runTime(30);
+    s.cmdSendMessage(3, "msg Hey!\\r\\n");
+    s.runTime(30);
+    s.cmdSendMessage(4, "msg How're things?\\r\\n");
+    s.runTime(30);
+    s.cmdSendMessage(2, "whisper alberto Hi\\r\\n");
+    s.runTime(30);
     s.cmdSendMessage(4, "listusr\\r\\n");
     s.runTime(5);
 

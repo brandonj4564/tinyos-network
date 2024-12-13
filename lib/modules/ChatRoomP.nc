@@ -64,6 +64,22 @@ implementation {
   uint8_t messageDataBuffer[MAX_NUM_OF_SOCKETS][250];
   uint8_t messageBufferIndex[MAX_NUM_OF_SOCKETS];
 
+  void printAllConnections() {
+    uint8_t i;
+    for (i = 0; i < maxNumConnections; i++) {
+      chat_connection_t *currConn = &connectionList[i];
+
+      if (currConn->bound) {
+        dbg(CHAT_CHANNEL, "--------------- USER ---------------\n");
+        dbg(CHAT_CHANNEL, "index: %u\n", i);
+        dbg(CHAT_CHANNEL, "username: %s\n", currConn->username);
+        dbg(CHAT_CHANNEL, "receive socket: %u\n", currConn->fd);
+        dbg(CHAT_CHANNEL, "send socket: %u\n",
+            call CorrespondingSocket.get(currConn->fd));
+      }
+    }
+  }
+
   event void Boot.booted() {
     uint8_t i;
     // Initialize a listener socket on port 41 at node id 1
@@ -73,6 +89,10 @@ implementation {
 
     for (i = 0; i < MAX_NUM_OF_SOCKETS; i++) {
       messageBufferIndex[i] = 0;
+
+      if (i < maxNumConnections) {
+        connectionList[i].bound = FALSE;
+      }
     }
   }
 
@@ -260,13 +280,19 @@ implementation {
       error_t outcome;
       socket_t fd;
 
-      dbg(CHAT_CHANNEL, "Command type: HELLO\n");
+      // dbg(CHAT_CHANNEL, "Command type: HELLO\n");
+
+      if (clientConnected) {
+        // client already connected, don't do it again
+        dbg(CHAT_CHANNEL, "ERROR: Client already connected!\n");
+        return;
+      }
 
       // contents begin at index 6 because indices 0-5 are 'hello ', which is
       // not useful anymore
       contents = &(msg[6]);
 
-      dbg(CHAT_CHANNEL, "Contents: %s\n", contents);
+      // dbg(CHAT_CHANNEL, "Contents: %s\n", contents);
 
       // Get the username from the message
       while (contents[i] != ' ') {
@@ -373,10 +399,20 @@ implementation {
       uint8_t i;
       bool canAccept = FALSE;
 
-      dbg(CHAT_CHANNEL, "New connection from client received!\n");
+      // dbg(CHAT_CHANNEL, "New connection from client received!\n");
+
+      for (i = 0; i < maxNumConnections; i++) {
+        if (connectionList[i].bound && connectionList[i].fd == fd) {
+          // Checks if this user is already connected
+          dbg(CHAT_CHANNEL, "You are already connected!\n");
+
+          return;
+        }
+      }
 
       for (i = 0; i < maxNumConnections; i++) {
         if (!connectionList[i].bound) {
+          // dbg(CHAT_CHANNEL, "Binding connection index %u\n", i);
           connectionList[i].bound = TRUE;
 
           canAccept = TRUE;
@@ -391,8 +427,13 @@ implementation {
       }
     } else {
       // This is the client accepting the connection from the chat server
-      dbg(CHAT_CHANNEL, "New connection from server received!\n");
-      call Transport.accept(fd);
+      error_t outcome;
+      // dbg(CHAT_CHANNEL, "New connection from server received!\n");
+      outcome = call Transport.accept(fd);
+
+      if (outcome == FAIL) {
+        dbg(CHAT_CHANNEL, "Failed to accept connection from server!\n");
+      }
     }
   }
 
@@ -422,7 +463,7 @@ implementation {
 
       clientConnected = TRUE;
 
-      //   dbg(CHAT_CHANNEL, "message to server: %s\n", message);
+      // dbg(CHAT_CHANNEL, "message to server: %s\n", message);
 
       call Transport.write(fd, (uint8_t *)message, 6 + usernameLen + 4);
     }
@@ -451,6 +492,8 @@ implementation {
       // Hard coded according to the values specified in the document
       dest.port = 41;
       dest.addr = (call Transport.getSocketAddr(fd))->addr;
+
+      // dbg(CHAT_CHANNEL, "Message: %s\n", msg);
 
       outcome = call Transport.bind(newSocket, &source);
       if (outcome == FAIL) {
@@ -482,9 +525,12 @@ implementation {
       (connectionList[connection].username)[i] = '\0';
       connectionList[connection].usernameLen = i;
 
-      dbg(CHAT_CHANNEL, "username: %s\n", connectionList[connection].username);
-      dbg(CHAT_CHANNEL, "usernameLen: %u\n",
-          connectionList[connection].usernameLen);
+      // printAllConnections();
+
+      // dbg(CHAT_CHANNEL, "username: %s\n",
+      // connectionList[connection].username);
+      // dbg(CHAT_CHANNEL, "usernameLen:  %u\n",
+      //     connectionList[connection].usernameLen);
 
     } else if (commandType == MESSAGE) {
       chat_connection_t *currConn;
@@ -540,8 +586,15 @@ implementation {
             socket_t writeSocket =
                 call CorrespondingSocket.get(connectionList[i].fd);
 
-            call Transport.write(writeSocket, (uint8_t *)messageToSend,
-                                 messageLen);
+            error_t outcome;
+            // dbg(CHAT_CHANNEL, "Broadcasting to socket %u\n", writeSocket);
+
+            outcome = call Transport.write(
+                writeSocket, (uint8_t *)messageToSend, messageLen);
+
+            if (outcome == FAIL) {
+              dbg(CHAT_CHANNEL, "Failed to broadcast to %u\n", writeSocket);
+            }
           }
         }
       }
@@ -610,11 +663,11 @@ implementation {
       messageLen = currPosition + len - 9 - recipientUserLen;
       messageToSend[messageLen] = '\0';
 
-      dbg(CHAT_CHANNEL, "username in total: %s\n", recipientUser);
-      dbg(CHAT_CHANNEL, "username in total len: %u\n", recipientUserLen);
+      // dbg(CHAT_CHANNEL, "username in total: %s\n", recipientUser);
+      // dbg(CHAT_CHANNEL, "username in total len: %u\n", recipientUserLen);
 
-      dbg(CHAT_CHANNEL, "message in total: %s\n", messageToSend);
-      dbg(CHAT_CHANNEL, "message in total len: %u\n", messageLen);
+      // dbg(CHAT_CHANNEL, "message in total: %s\n", messageToSend);
+      // dbg(CHAT_CHANNEL, "message in total len: %u\n", messageLen);
 
       //  Time to locate the chat connection with the corresponding username (if
       //  it exists) and send the message
@@ -730,7 +783,7 @@ implementation {
     char fullMessage[messageBufferIndex[fd]];
     uint8_t i;
 
-    // dbg(CHAT_CHANNEL, "Begin handing message.\n");
+    // dbg(CHAT_CHANNEL, "Begin handling message.\n");
 
     for (i = 0; i < messageBufferIndex[fd]; i++) {
       fullMessage[i] = messageDataBuffer[fd][i];
